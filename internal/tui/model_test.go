@@ -250,21 +250,37 @@ func TestStartupLoaderFailureDisplaysError(t *testing.T) {
 }
 
 func TestViewLinesFitTerminalWidth(t *testing.T) {
-	model := NewModel(review.ReviewSession{})
-	model.Width = 80
-	model.Height = 20
-	model.Startup = review.StartupContext{
-		Repo:    review.RepoRef{Owner: "joelmccoy", Name: "trail-hunk", Branch: "main"},
-		Message: `No open GitHub pull request found for branch "main".`,
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{width: 60, height: 16},
+		{width: 80, height: 20},
+		{width: 120, height: 24},
+		{width: 200, height: 36},
 	}
 
-	for i, line := range strings.Split(model.View(), "\n") {
-		if width := lipgloss.Width(line); width > model.Width {
-			t.Fatalf("line %d width = %d, want <= %d: %q", i, width, model.Width, line)
+	for _, size := range sizes {
+		model := NewModel(review.ReviewSession{})
+		model.Width = size.width
+		model.Height = size.height
+		model.Startup = review.StartupContext{
+			Repo:    review.RepoRef{Owner: "joelmccoy", Name: "trail-hunk", Branch: "main"},
+			Message: `No open GitHub pull request found for branch "main".`,
 		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "─╮" || trimmed == "─╯" {
-			t.Fatalf("line %d has orphaned border cap: %q", i, line)
+
+		lines := strings.Split(model.View(), "\n")
+		if len(lines) > model.Height {
+			t.Fatalf("%dx%d rendered %d lines, want <= %d:\n%s", size.width, size.height, len(lines), model.Height, model.View())
+		}
+		for i, line := range lines {
+			if width := lipgloss.Width(line); width != model.Width {
+				t.Fatalf("%dx%d line %d width = %d, want %d: %q", size.width, size.height, i, width, model.Width, line)
+			}
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "─╮" || trimmed == "─╯" {
+				t.Fatalf("%dx%d line %d has orphaned border cap: %q", size.width, size.height, i, line)
+			}
 		}
 	}
 }
@@ -280,6 +296,9 @@ func TestStartupUsesWideLayout(t *testing.T) {
 
 	for _, line := range strings.Split(model.View(), "\n") {
 		if strings.Count(line, "╭") >= 2 {
+			if width := lipgloss.Width(line); width < 120 {
+				t.Fatalf("wide startup row width = %d, want it to use most of the terminal: %q", width, line)
+			}
 			return
 		}
 	}
@@ -287,25 +306,23 @@ func TestStartupUsesWideLayout(t *testing.T) {
 }
 
 func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
-	model := NewModel(review.ReviewSession{})
-	model.Width = 80
-	model.Height = 20
+	widths := []int{40, 60, 80, 120}
+	for _, width := range widths {
+		model := NewModel(review.ReviewSession{})
+		model.Width = width
+		model.Height = 20
 
-	lines := strings.Split(model.View(), "\n")
-	var footer string
-	for _, line := range lines {
-		if strings.Contains(line, "R review") {
-			footer = line
+		lines := strings.Split(model.View(), "\n")
+		footer := lines[len(lines)-1]
+		if lipgloss.Height(footer) != 1 {
+			t.Fatalf("footer height = %d, want 1: %q", lipgloss.Height(footer), footer)
 		}
-		if strings.TrimSpace(line) == "ask" {
-			t.Fatalf("footer wrapped trailing item onto its own line: %q", model.View())
+		if got := lipgloss.Width(footer); got != width {
+			t.Fatalf("footer width = %d, want %d: %q", got, width, footer)
 		}
-	}
-	if footer == "" {
-		t.Fatalf("footer not found in view: %q", model.View())
-	}
-	if !strings.Contains(footer, "t ask") {
-		t.Fatalf("footer = %q, want t ask on same line", footer)
+		if strings.TrimSpace(footer) == "" {
+			t.Fatalf("footer is empty at width %d", width)
+		}
 	}
 }
 

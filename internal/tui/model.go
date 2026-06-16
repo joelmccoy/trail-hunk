@@ -162,39 +162,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	header := m.renderHeader()
-	body := m.renderBody()
-	footer := m.renderFooter()
-
 	if m.Width <= 0 {
-		return strings.Join([]string{header, body, footer}, "\n")
+		return strings.Join([]string{m.renderHeader(), m.renderBody(80), m.renderFooter(80)}, "\n")
 	}
 
-	header = lipgloss.NewStyle().
-		Width(contentWidth(m.Width, 2)).
-		Padding(0, 1).
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("230")).
-		Bold(true).
-		Render(header)
+	header := renderHeaderBar(m.renderHeader(), m.Width)
+	footer := m.renderFooter(m.Width)
 
-	footer = lipgloss.NewStyle().
-		Width(contentWidth(m.Width, 2)).
-		Padding(0, 1).
-		Foreground(lipgloss.Color("244")).
-		Render(footer)
-
-	bodyHeight := m.Height - lipgloss.Height(header) - lipgloss.Height(footer) - 2
+	bodyHeight := m.Height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	body = lipgloss.NewStyle().
-		Width(contentWidth(m.Width, 4)).
+	bodyStyle := lipgloss.NewStyle().
+		Width(m.Width).
 		Height(bodyHeight).
-		Padding(1, 2).
-		Render(body)
+		MaxHeight(bodyHeight).
+		Padding(1, 2)
+	if bodyHeight < 4 {
+		bodyStyle = bodyStyle.Padding(0, 1)
+	}
 
-	return strings.Join([]string{header, body, footer}, "\n")
+	body := bodyStyle.Render(m.renderBody(contentWidthForStyle(m.Width, bodyStyle)))
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func renderHeaderBar(text string, width int) string {
+	return lipgloss.NewStyle().
+		Width(width).
+		Background(lipgloss.Color("62")).
+		Foreground(lipgloss.Color("230")).
+		Bold(true).
+		Render(truncateCells(" "+text, width))
+}
+
+func (m Model) renderFooter(width int) string {
+	return lipgloss.NewStyle().
+		Width(width).
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("244")).
+		Render(truncateCells(" "+footerText(width-1), width))
 }
 
 func (m Model) renderHeader() string {
@@ -211,26 +218,22 @@ func (m Model) renderHeader() string {
 	return b.String()
 }
 
-func (m Model) renderBody() string {
+func (m Model) renderBody(width int) string {
 	var b strings.Builder
 	switch m.Screen {
 	case ScreenStartup:
-		b.WriteString(renderStartup(m))
+		b.WriteString(renderStartup(m, width))
 	case ScreenOverview:
 		b.WriteString(m.Session.Plan.Overview)
 		b.WriteByte('\n')
 	case ScreenWalkthrough:
 		b.WriteString(renderWalkthrough(m))
 	case ScreenComments:
-		b.WriteString(renderComments(m))
+		b.WriteString(renderComments(m, width))
 	case ScreenSubmit:
 		b.WriteString("Submit approved review comments\n")
 	}
 	return b.String()
-}
-
-func (m Model) renderFooter() string {
-	return "R review C queue S submit q quit n/p step j/k pick a ok d drop f files t ask"
 }
 
 type reviewStartedMsg struct {
@@ -267,7 +270,7 @@ func submitReviewCmd(submitter ReviewSubmitter, session review.ReviewSession) te
 	}
 }
 
-func renderStartup(m Model) string {
+func renderStartup(m Model, width int) string {
 	var panels []func(int) string
 	if m.StartupLoading {
 		panels = append(panels, func(width int) string {
@@ -303,7 +306,7 @@ func renderStartup(m Model) string {
 		panels = append(panels, func(width int) string {
 			return statusPanel("Generating Review", "Resolving git, GitHub PR context, diff, and AI walkthrough.", width, lipgloss.Color("63"))
 		})
-		return renderPanelGrid(m.Width, panels)
+		return renderPanelGrid(width, panels)
 	}
 
 	panels = append(panels, func(width int) string {
@@ -322,7 +325,7 @@ func renderStartup(m Model) string {
 			return statusPanel("Review Error", m.Err.Error(), width, lipgloss.Color("203"))
 		})
 	}
-	return renderPanelGrid(m.Width, panels)
+	return renderPanelGrid(width, panels)
 }
 
 func renderWalkthrough(m Model) string {
@@ -363,9 +366,9 @@ func renderWalkthrough(m Model) string {
 	return b.String()
 }
 
-func renderComments(m Model) string {
+func renderComments(m Model, width int) string {
 	approved := m.Session.ApprovedComments()
-	panelWidth := panelWidth(m.Width)
+	panelWidth := panelWidth(width)
 
 	var lines []string
 	if m.Submitting {
@@ -454,8 +457,8 @@ func (m *Model) syncStepSuggestionStatus(commentID string, status review.Comment
 	}
 }
 
-func contentWidth(totalWidth int, horizontalPadding int) int {
-	width := totalWidth - horizontalPadding
+func contentWidthForStyle(totalWidth int, style lipgloss.Style) int {
+	width := totalWidth - style.GetHorizontalFrameSize()
 	if width < 1 {
 		return 1
 	}
@@ -463,14 +466,10 @@ func contentWidth(totalWidth int, horizontalPadding int) int {
 }
 
 func panelWidth(totalWidth int) int {
-	width := contentWidth(totalWidth, 16)
-	if width <= 0 {
-		return 64
+	if totalWidth < 1 {
+		return 1
 	}
-	if width > 68 {
-		return 68
-	}
-	return width
+	return totalWidth
 }
 
 func renderPanelGrid(totalWidth int, panels []func(int) string) string {
@@ -478,23 +477,20 @@ func renderPanelGrid(totalWidth int, panels []func(int) string) string {
 		return ""
 	}
 
-	if totalWidth >= 120 && len(panels) > 1 {
-		availableWidth := contentWidth(totalWidth, 8)
+	if totalWidth >= 96 && len(panels) > 1 {
+		availableWidth := totalWidth
 		gap := 4
-		columnTotalWidth := (availableWidth - gap) / 2
-		panelContentWidth := contentWidth(columnTotalWidth, 4)
-		if panelContentWidth < 24 {
-			panelContentWidth = 24
-		}
+		leftWidth := (availableWidth - gap) / 2
+		rightWidth := availableWidth - gap - leftWidth
 
 		var rows []string
 		for i := 0; i < len(panels); i += 2 {
-			left := panels[i](panelContentWidth)
+			left := panels[i](leftWidth)
 			if i+1 >= len(panels) {
 				rows = append(rows, left)
 				continue
 			}
-			right := panels[i+1](panelContentWidth)
+			right := panels[i+1](rightWidth)
 			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right))
 		}
 		return strings.Join(rows, "\n\n")
@@ -517,11 +513,68 @@ func statusPanel(title string, body string, width int, accent lipgloss.Color) st
 }
 
 func panelStyle(width int, accent lipgloss.Color) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Width(width).
+	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accent).
 		Padding(0, 1)
+	return style.Width(maxInt(1, width-style.GetHorizontalBorderSize()))
+}
+
+func footerText(width int) string {
+	long := "R review C queue S submit q quit n/p step j/k pick a accept d dismiss f files t ask"
+	if lipgloss.Width(long) <= width {
+		return long
+	}
+
+	compact := "R review C queue S submit q quit n/p j/k a ok d drop f files t ask"
+	if lipgloss.Width(compact) <= width {
+		return compact
+	}
+
+	minimal := "R rev C q S sub q quit n/p j/k a d f t"
+	if lipgloss.Width(minimal) <= width {
+		return minimal
+	}
+
+	essential := "R rev q quit n/p j/k t"
+	return truncateCells(essential, width)
+}
+
+func truncateCells(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(text) <= width {
+		return text
+	}
+	if width <= 3 {
+		var b strings.Builder
+		for _, r := range text {
+			if lipgloss.Width(b.String()+string(r)) > width {
+				break
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+
+	limit := width - 3
+	var b strings.Builder
+	for _, r := range text {
+		next := b.String() + string(r)
+		if lipgloss.Width(next) > limit {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + "..."
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func panelContent(title string, body string) string {
