@@ -61,6 +61,57 @@ func TestToggleKeys(t *testing.T) {
 	}
 }
 
+func TestSuggestionSelectionAndActions(t *testing.T) {
+	model := NewModel(review.ReviewSession{
+		Plan: review.WalkthroughPlan{
+			ReviewOrder: []review.ReviewStep{
+				{
+					ID:      "step-1",
+					Title:   "Review startup",
+					Summary: "Startup initializes a review.",
+					Why:     "The user needs a first step.",
+					Suggestions: []review.ReviewComment{
+						{ID: "c1", Body: "First suggestion", Status: review.StatusSuggested},
+						{ID: "c2", Body: "Second suggestion", Status: review.StatusSuggested},
+					},
+				},
+			},
+		},
+		Comments: []review.ReviewComment{
+			{ID: "c1", Body: "First suggestion", Status: review.StatusSuggested},
+			{ID: "c2", Body: "Second suggestion", Status: review.StatusSuggested},
+		},
+	})
+	model.Screen = ScreenWalkthrough
+
+	updated, _ := model.Update(key("j"))
+	model = updated.(Model)
+	if model.SelectedSuggestion != 1 {
+		t.Fatalf("SelectedSuggestion = %d, want 1", model.SelectedSuggestion)
+	}
+
+	updated, _ = model.Update(key("a"))
+	model = updated.(Model)
+	if model.Session.Comments[1].Status != review.StatusApproved {
+		t.Fatalf("Status = %q, want approved", model.Session.Comments[1].Status)
+	}
+	if model.Session.Plan.ReviewOrder[0].Suggestions[1].Status != review.StatusApproved {
+		t.Fatalf("step suggestion status = %q, want approved", model.Session.Plan.ReviewOrder[0].Suggestions[1].Status)
+	}
+
+	updated, _ = model.Update(key("k"))
+	model = updated.(Model)
+	if model.SelectedSuggestion != 0 {
+		t.Fatalf("SelectedSuggestion = %d, want 0", model.SelectedSuggestion)
+	}
+
+	updated, _ = model.Update(key("d"))
+	model = updated.(Model)
+	if model.Session.Comments[0].Status != review.StatusDismissed {
+		t.Fatalf("Status = %q, want dismissed", model.Session.Comments[0].Status)
+	}
+}
+
 func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
 	expected := review.ReviewSession{
 		Plan: review.WalkthroughPlan{
