@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joelmccoy/trail-hunk/internal/app"
 )
 
 type model struct{}
@@ -30,6 +31,9 @@ func (model) View() string {
 }
 
 func main() {
+	cfg := app.ConfigFromEnv()
+	_ = cfg
+
 	if _, err := tea.NewProgram(model{}).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "trail-hunk: %v\n", err)
 		os.Exit(1)
