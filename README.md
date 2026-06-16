@@ -41,6 +41,9 @@ go run ./cmd/trail-hunk
 Inside the TUI, press `R` to initiate review generation for the current
 branch's GitHub pull request. Press `q` to quit.
 
+The TUI runs in Bubble Tea's alternate screen mode, so it behaves like a
+full-screen terminal application and restores your shell when it exits.
+
 ## Auth And Providers
 
 GitHub auth is local-first. The app will use `GITHUB_TOKEN` when set and will
@@ -52,10 +55,10 @@ TRAIL_HUNK_PROVIDER=codex go run ./cmd/trail-hunk
 TRAIL_HUNK_PROVIDER=claude TRAIL_HUNK_MODEL=sonnet go run ./cmd/trail-hunk
 ```
 
-The review flow requires an open GitHub pull request for the current branch.
-When you press `R`, the app resolves the local repository, finds the matching
-PR, fetches its raw diff, asks the selected AI provider for a structured review,
-and opens the walkthrough screen.
+The startup screen automatically detects the local repository and matching open
+GitHub pull request for the current branch. When you press `R`, the app fetches
+the raw diff, asks the selected AI provider for a structured review, and opens
+the walkthrough screen.
 
 ## Architecture Decisions
 

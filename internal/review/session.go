@@ -20,6 +20,14 @@ type PullRequest struct {
 	Number int
 	Title  string
 	Body   string
+	State  string
+	URL    string
+}
+
+type StartupContext struct {
+	Repo    RepoRef
+	PR      *PullRequest
+	Message string
 }
 
 type WalkthroughPlan struct {

@@ -50,6 +50,10 @@ go run ./cmd/trail-hunk
 Expected today:
 
 - The TUI starts.
+- The TUI uses the full-screen alternate terminal screen and restores the shell
+  after exit.
+- Startup detection displays repository information and PR information when a
+  PR exists for the current branch.
 - Pressing `R` initiates review generation.
 - If no PR exists for the current branch, the startup screen shows an actionable
   error.

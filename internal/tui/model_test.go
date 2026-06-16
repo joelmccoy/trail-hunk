@@ -156,6 +156,50 @@ func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
 	}
 }
 
+func TestStartupLoaderDisplaysCurrentPullRequest(t *testing.T) {
+	model := NewModelWithOptions(review.ReviewSession{}, Options{
+		StartupLoader: func(context.Context) (review.StartupContext, error) {
+			return review.StartupContext{
+				Repo: review.RepoRef{Owner: "joelmccoy", Name: "trail-hunk", Branch: "feature"},
+				PR:   &review.PullRequest{Number: 12, Title: "Add guided review", State: "open"},
+			}, nil
+		},
+	})
+
+	cmd := model.Init()
+	if cmd == nil {
+		t.Fatal("expected startup loader command")
+	}
+
+	updated, _ := model.Update(cmd())
+	model = updated.(Model)
+	view := model.View()
+	if !strings.Contains(view, "joelmccoy/trail-hunk") {
+		t.Fatalf("View() = %q, want repo", view)
+	}
+	if !strings.Contains(view, "#12 Add guided review") {
+		t.Fatalf("View() = %q, want PR title", view)
+	}
+}
+
+func TestStartupLoaderFailureDisplaysError(t *testing.T) {
+	model := NewModelWithOptions(review.ReviewSession{}, Options{
+		StartupLoader: func(context.Context) (review.StartupContext, error) {
+			return review.StartupContext{}, errors.New("gh auth token failed")
+		},
+	})
+
+	cmd := model.Init()
+	updated, _ := model.Update(cmd())
+	model = updated.(Model)
+	if model.StartupErr == nil {
+		t.Fatal("expected startup error")
+	}
+	if !strings.Contains(model.View(), "gh auth token failed") {
+		t.Fatalf("View() = %q, want startup error", model.View())
+	}
+}
+
 func TestStartReviewFailureShowsError(t *testing.T) {
 	model := NewModelWithStarter(review.ReviewSession{}, func(context.Context) (review.ReviewSession, error) {
 		return review.ReviewSession{}, errors.New("no open GitHub pull request found")

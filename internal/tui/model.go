@@ -6,14 +6,24 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joelmccoy/trail-hunk/internal/review"
 )
 
 type ReviewStarter func(ctx context.Context) (review.ReviewSession, error)
+type StartupLoader func(ctx context.Context) (review.StartupContext, error)
+
+type Options struct {
+	ReviewStarter ReviewStarter
+	StartupLoader StartupLoader
+}
 
 type Model struct {
 	Screen             Screen
 	Session            review.ReviewSession
+	Startup            review.StartupContext
+	StartupLoading     bool
+	StartupErr         error
 	FocusedPane        string
 	Width              int
 	Height             int
@@ -23,6 +33,7 @@ type Model struct {
 	Loading            bool
 	Err                error
 	starter            ReviewStarter
+	startupLoader      StartupLoader
 }
 
 func NewModel(session review.ReviewSession) Model {
@@ -30,16 +41,25 @@ func NewModel(session review.ReviewSession) Model {
 }
 
 func NewModelWithStarter(session review.ReviewSession, starter ReviewStarter) Model {
+	return NewModelWithOptions(session, Options{ReviewStarter: starter})
+}
+
+func NewModelWithOptions(session review.ReviewSession, opts Options) Model {
 	return Model{
-		Screen:      ScreenStartup,
-		Session:     session,
-		FocusedPane: "diff",
-		starter:     starter,
+		Screen:         ScreenStartup,
+		Session:        session,
+		FocusedPane:    "diff",
+		starter:        opts.ReviewStarter,
+		startupLoader:  opts.StartupLoader,
+		StartupLoading: opts.StartupLoader != nil,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	if m.startupLoader == nil {
+		return nil
+	}
+	return loadStartupCmd(m.startupLoader)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -47,6 +67,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
+	case startupLoadedMsg:
+		m.StartupLoading = false
+		if msg.Err != nil {
+			m.StartupErr = msg.Err
+			return m, nil
+		}
+		m.StartupErr = nil
+		m.Startup = msg.Startup
 	case tea.KeyMsg:
 		switch msg.String() {
 		case keyQuit, "ctrl+c":
@@ -103,15 +131,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	header := m.renderHeader()
+	body := m.renderBody()
+	footer := m.renderFooter()
+
+	if m.Width <= 0 {
+		return strings.Join([]string{header, body, footer}, "\n")
+	}
+
+	header = lipgloss.NewStyle().
+		Width(m.Width).
+		Padding(0, 1).
+		Background(lipgloss.Color("62")).
+		Foreground(lipgloss.Color("230")).
+		Bold(true).
+		Render(header)
+
+	footer = lipgloss.NewStyle().
+		Width(m.Width).
+		Padding(0, 1).
+		Foreground(lipgloss.Color("244")).
+		Render(footer)
+
+	bodyHeight := m.Height - lipgloss.Height(header) - lipgloss.Height(footer) - 2
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	body = lipgloss.NewStyle().
+		Width(m.Width).
+		Height(bodyHeight).
+		Padding(1, 2).
+		Render(body)
+
+	return strings.Join([]string{header, body, footer}, "\n")
+}
+
+func (m Model) renderHeader() string {
 	var b strings.Builder
-	b.WriteString("trail-hunk\n")
-	b.WriteString(fmt.Sprintf("screen: %s", m.Screen))
+	b.WriteString("trail-hunk")
+	b.WriteString(fmt.Sprintf("  %s", m.Screen))
 	if len(m.Session.Plan.ReviewOrder) > 0 {
 		step := m.Session.Plan.ReviewOrder[m.Session.Cursor.StepIndex]
-		b.WriteString(fmt.Sprintf(" | step: %s", step.ID))
+		b.WriteString(fmt.Sprintf("  step:%s", step.ID))
 	}
-	b.WriteString("\n\n")
+	if m.Startup.Repo.Owner != "" {
+		b.WriteString(fmt.Sprintf("  %s/%s:%s", m.Startup.Repo.Owner, m.Startup.Repo.Name, m.Startup.Repo.Branch))
+	}
+	return b.String()
+}
 
+func (m Model) renderBody() string {
+	var b strings.Builder
 	switch m.Screen {
 	case ScreenStartup:
 		b.WriteString(renderStartup(m))
@@ -125,14 +195,28 @@ func (m Model) View() string {
 	case ScreenSubmit:
 		b.WriteString("Submit approved review comments\n")
 	}
-
-	b.WriteString("\nkeys: R review | q quit | n/p step | f files | t ask\n")
 	return b.String()
+}
+
+func (m Model) renderFooter() string {
+	return "R review | q quit | n/p step | j/k select | a accept | d dismiss | f files | t ask"
 }
 
 type reviewStartedMsg struct {
 	Session review.ReviewSession
 	Err     error
+}
+
+type startupLoadedMsg struct {
+	Startup review.StartupContext
+	Err     error
+}
+
+func loadStartupCmd(loader StartupLoader) tea.Cmd {
+	return func() tea.Msg {
+		startup, err := loader(context.Background())
+		return startupLoadedMsg{Startup: startup, Err: err}
+	}
 }
 
 func startReviewCmd(starter ReviewStarter) tea.Cmd {
@@ -144,6 +228,28 @@ func startReviewCmd(starter ReviewStarter) tea.Cmd {
 
 func renderStartup(m Model) string {
 	var b strings.Builder
+	if m.StartupLoading {
+		b.WriteString("Detecting current GitHub pull request...\n\n")
+	}
+	if m.Startup.Repo.Owner != "" {
+		b.WriteString("Repository\n")
+		b.WriteString(fmt.Sprintf("  %s/%s\n", m.Startup.Repo.Owner, m.Startup.Repo.Name))
+		b.WriteString(fmt.Sprintf("  branch: %s\n\n", m.Startup.Repo.Branch))
+	}
+	if m.Startup.PR != nil {
+		b.WriteString("Current PR\n")
+		b.WriteString(fmt.Sprintf("  #%d %s\n", m.Startup.PR.Number, m.Startup.PR.Title))
+		if m.Startup.PR.State != "" {
+			b.WriteString(fmt.Sprintf("  state: %s\n", m.Startup.PR.State))
+		}
+		if m.Startup.PR.URL != "" {
+			b.WriteString(fmt.Sprintf("  %s\n", m.Startup.PR.URL))
+		}
+		b.WriteByte('\n')
+	} else if m.Startup.Message != "" {
+		b.WriteString(m.Startup.Message)
+		b.WriteString("\n\n")
+	}
 	if m.Loading {
 		b.WriteString("Generating guided review...\n")
 		b.WriteString("Resolving git, GitHub PR context, diff, and AI walkthrough.\n")
@@ -152,6 +258,11 @@ func renderStartup(m Model) string {
 
 	b.WriteString("Press R to initiate a guided review for the current GitHub pull request.\n")
 	b.WriteString("Provider is configured with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.\n")
+	if m.StartupErr != nil {
+		b.WriteString("\nstartup error: ")
+		b.WriteString(m.StartupErr.Error())
+		b.WriteByte('\n')
+	}
 	if m.Err != nil {
 		b.WriteString("\nerror: ")
 		b.WriteString(m.Err.Error())

@@ -14,6 +14,22 @@ import (
 
 func main() {
 	cfg := app.ConfigFromEnv()
+	startupLoader := func(ctx context.Context) (review.StartupContext, error) {
+		token, err := github.DiscoverToken(ctx)
+		if err != nil {
+			return review.StartupContext{}, err
+		}
+
+		deps, err := app.NewReviewDependencies(cfg, token)
+		if err != nil {
+			return review.StartupContext{}, err
+		}
+
+		return app.ResolveStartupContext(ctx, ".", app.StartupDependencies{
+			Repo:   deps.Repo,
+			GitHub: deps.GitHub,
+		})
+	}
 	starter := func(ctx context.Context) (review.ReviewSession, error) {
 		token, err := github.DiscoverToken(ctx)
 		if err != nil {
@@ -28,7 +44,11 @@ func main() {
 		return app.RunReview(ctx, ".", deps)
 	}
 
-	if _, err := tea.NewProgram(tui.NewModelWithStarter(review.ReviewSession{}, starter)).Run(); err != nil {
+	model := tui.NewModelWithOptions(review.ReviewSession{}, tui.Options{
+		ReviewStarter: starter,
+		StartupLoader: startupLoader,
+	})
+	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "trail-hunk: %v\n", err)
 		os.Exit(1)
 	}
