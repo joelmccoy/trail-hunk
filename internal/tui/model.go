@@ -140,7 +140,7 @@ func (m Model) View() string {
 	}
 
 	header = lipgloss.NewStyle().
-		Width(m.Width).
+		Width(contentWidth(m.Width, 2)).
 		Padding(0, 1).
 		Background(lipgloss.Color("62")).
 		Foreground(lipgloss.Color("230")).
@@ -148,7 +148,7 @@ func (m Model) View() string {
 		Render(header)
 
 	footer = lipgloss.NewStyle().
-		Width(m.Width).
+		Width(contentWidth(m.Width, 2)).
 		Padding(0, 1).
 		Foreground(lipgloss.Color("244")).
 		Render(footer)
@@ -158,7 +158,7 @@ func (m Model) View() string {
 		bodyHeight = 1
 	}
 	body = lipgloss.NewStyle().
-		Width(m.Width).
+		Width(contentWidth(m.Width, 4)).
 		Height(bodyHeight).
 		Padding(1, 2).
 		Render(body)
@@ -199,7 +199,7 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderFooter() string {
-	return "R review | q quit | n/p step | j/k select | a accept | d dismiss | f files | t ask"
+	return "R review  q quit  n/p step  j/k pick  a accept  d drop  f files  t ask"
 }
 
 type reviewStartedMsg struct {
@@ -227,48 +227,53 @@ func startReviewCmd(starter ReviewStarter) tea.Cmd {
 }
 
 func renderStartup(m Model) string {
-	var b strings.Builder
-	if m.StartupLoading {
-		b.WriteString("Detecting current GitHub pull request...\n\n")
+	width := contentWidth(m.Width, 8)
+	if width <= 0 {
+		width = 72
 	}
-	if m.Startup.Repo.Owner != "" {
-		b.WriteString("Repository\n")
-		b.WriteString(fmt.Sprintf("  %s/%s\n", m.Startup.Repo.Owner, m.Startup.Repo.Name))
-		b.WriteString(fmt.Sprintf("  branch: %s\n\n", m.Startup.Repo.Branch))
-	}
-	if m.Startup.PR != nil {
-		b.WriteString("Current PR\n")
-		b.WriteString(fmt.Sprintf("  #%d %s\n", m.Startup.PR.Number, m.Startup.PR.Title))
-		if m.Startup.PR.State != "" {
-			b.WriteString(fmt.Sprintf("  state: %s\n", m.Startup.PR.State))
-		}
-		if m.Startup.PR.URL != "" {
-			b.WriteString(fmt.Sprintf("  %s\n", m.Startup.PR.URL))
-		}
-		b.WriteByte('\n')
-	} else if m.Startup.Message != "" {
-		b.WriteString(m.Startup.Message)
-		b.WriteString("\n\n")
-	}
-	if m.Loading {
-		b.WriteString("Generating guided review...\n")
-		b.WriteString("Resolving git, GitHub PR context, diff, and AI walkthrough.\n")
-		return b.String()
+	panelWidth := width
+	if panelWidth > 68 {
+		panelWidth = 68
 	}
 
-	b.WriteString("Press R to initiate a guided review for the current GitHub pull request.\n")
-	b.WriteString("Provider is configured with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.\n")
+	var sections []string
+	if m.StartupLoading {
+		sections = append(sections, statusPanel("Detecting PR", "Checking local git context and GitHub pull requests.", panelWidth, lipgloss.Color("63")))
+	}
+	if m.Startup.Repo.Owner != "" {
+		sections = append(sections, infoPanel("Repository", []string{
+			fmt.Sprintf("%s/%s", m.Startup.Repo.Owner, m.Startup.Repo.Name),
+			fmt.Sprintf("branch: %s", m.Startup.Repo.Branch),
+		}, panelWidth))
+	}
+	if m.Startup.PR != nil {
+		lines := []string{fmt.Sprintf("#%d %s", m.Startup.PR.Number, m.Startup.PR.Title)}
+		if m.Startup.PR.State != "" {
+			lines = append(lines, fmt.Sprintf("state: %s", m.Startup.PR.State))
+		}
+		if m.Startup.PR.URL != "" {
+			lines = append(lines, m.Startup.PR.URL)
+		}
+		sections = append(sections, statusPanel("Current PR", strings.Join(lines, "\n"), panelWidth, lipgloss.Color("36")))
+	} else if m.Startup.Message != "" {
+		sections = append(sections, statusPanel("No PR Found", m.Startup.Message, panelWidth, lipgloss.Color("178")))
+	}
+	if m.Loading {
+		sections = append(sections, statusPanel("Generating Review", "Resolving git, GitHub PR context, diff, and AI walkthrough.", panelWidth, lipgloss.Color("63")))
+		return strings.Join(sections, "\n\n")
+	}
+
+	sections = append(sections, infoPanel("Next", []string{
+		"Press R to initiate a guided review.",
+		"Configure provider with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.",
+	}, panelWidth))
 	if m.StartupErr != nil {
-		b.WriteString("\nstartup error: ")
-		b.WriteString(m.StartupErr.Error())
-		b.WriteByte('\n')
+		sections = append(sections, statusPanel("Startup Error", m.StartupErr.Error(), panelWidth, lipgloss.Color("203")))
 	}
 	if m.Err != nil {
-		b.WriteString("\nerror: ")
-		b.WriteString(m.Err.Error())
-		b.WriteByte('\n')
+		sections = append(sections, statusPanel("Review Error", m.Err.Error(), panelWidth, lipgloss.Color("203")))
 	}
-	return b.String()
+	return strings.Join(sections, "\n\n")
 }
 
 func renderWalkthrough(m Model) string {
@@ -376,4 +381,37 @@ func (m *Model) syncStepSuggestionStatus(commentID string, status review.Comment
 			return
 		}
 	}
+}
+
+func contentWidth(totalWidth int, horizontalPadding int) int {
+	width := totalWidth - horizontalPadding
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func infoPanel(title string, lines []string, width int) string {
+	return panelStyle(width, lipgloss.Color("62")).Render(panelContent(title, strings.Join(lines, "\n")))
+}
+
+func statusPanel(title string, body string, width int, accent lipgloss.Color) string {
+	return panelStyle(width, accent).Render(panelContent(title, body))
+}
+
+func panelStyle(width int, accent lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		Padding(0, 1)
+}
+
+func panelContent(title string, body string) string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("230"))
+	bodyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+	return titleStyle.Render(title) + "\n" + bodyStyle.Render(body)
 }

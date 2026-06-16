@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joelmccoy/trail-hunk/internal/review"
 )
 
@@ -197,6 +198,45 @@ func TestStartupLoaderFailureDisplaysError(t *testing.T) {
 	}
 	if !strings.Contains(model.View(), "gh auth token failed") {
 		t.Fatalf("View() = %q, want startup error", model.View())
+	}
+}
+
+func TestViewLinesFitTerminalWidth(t *testing.T) {
+	model := NewModel(review.ReviewSession{})
+	model.Width = 80
+	model.Height = 20
+	model.Startup = review.StartupContext{
+		Repo:    review.RepoRef{Owner: "joelmccoy", Name: "trail-hunk", Branch: "main"},
+		Message: `No open GitHub pull request found for branch "main".`,
+	}
+
+	for i, line := range strings.Split(model.View(), "\n") {
+		if width := lipgloss.Width(line); width > model.Width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i, width, model.Width, line)
+		}
+	}
+}
+
+func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
+	model := NewModel(review.ReviewSession{})
+	model.Width = 80
+	model.Height = 20
+
+	lines := strings.Split(model.View(), "\n")
+	var footer string
+	for _, line := range lines {
+		if strings.Contains(line, "R review") {
+			footer = line
+		}
+		if strings.TrimSpace(line) == "ask" {
+			t.Fatalf("footer wrapped trailing item onto its own line: %q", model.View())
+		}
+	}
+	if footer == "" {
+		t.Fatalf("footer not found in view: %q", model.View())
+	}
+	if !strings.Contains(footer, "t ask") {
+		t.Fatalf("footer = %q, want t ask on same line", footer)
 	}
 }
 
