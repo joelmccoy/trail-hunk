@@ -6,4 +6,5 @@ const (
 	keyPreviousStep  = "p"
 	keyToggleFiles   = "f"
 	keyToggleAskPane = "t"
+	keyStartReview   = "R"
 )

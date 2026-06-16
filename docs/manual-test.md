@@ -50,6 +50,9 @@ go run ./cmd/trail-hunk
 Expected today:
 
 - The TUI starts.
+- Pressing `R` initiates review generation.
+- If no PR exists for the current branch, the startup screen shows an actionable
+  error.
 - Pressing `q` exits.
 - No panic or terminal corruption occurs.
 
@@ -58,6 +61,7 @@ Expected today:
 Use a repository with an open PR on the current branch.
 
 - [ ] Start `trail-hunk` from the repository root.
+- [ ] Press `R` to initiate review generation.
 - [ ] Confirm the app resolves owner, repository, branch, and PR.
 - [ ] Confirm GitHub context fetches PR metadata and raw diff.
 - [ ] Confirm selected AI provider generates a structured overview.
@@ -68,7 +72,6 @@ Use a repository with an open PR on the current branch.
 - [ ] Add one manual line comment.
 - [ ] Submit a `COMMENT` review to GitHub.
 
-The full real-PR interactive flow is the next implementation focus after the
-current skeleton because the underlying API boundaries and session state are now
-in place.
-
+The current implementation has the underlying API boundaries, session state,
+review startup command, and walkthrough loading path in place. The next focus is
+making the walkthrough panes richer and adding in-TUI editing/submission flows.

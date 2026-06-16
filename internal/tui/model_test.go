@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -58,6 +61,79 @@ func TestToggleKeys(t *testing.T) {
 	}
 }
 
+func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
+	expected := review.ReviewSession{
+		Plan: review.WalkthroughPlan{
+			Overview: "Adds a guided review flow.",
+			ReviewOrder: []review.ReviewStep{
+				{
+					ID:      "step-1",
+					Title:   "Review startup",
+					Summary: "Startup now initializes a review.",
+					Why:     "The user needs a concrete first review step.",
+				},
+			},
+		},
+	}
+	model := NewModelWithStarter(review.ReviewSession{}, func(context.Context) (review.ReviewSession, error) {
+		return expected, nil
+	})
+
+	updated, cmd := model.Update(key("R"))
+	model = updated.(Model)
+	if !model.Loading {
+		t.Fatal("expected loading after pressing R")
+	}
+	if model.Screen != ScreenStartup {
+		t.Fatalf("Screen = %q, want startup while loading", model.Screen)
+	}
+	if cmd == nil {
+		t.Fatal("expected start review command")
+	}
+
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	if model.Loading {
+		t.Fatal("did not expect loading after success")
+	}
+	if model.Screen != ScreenWalkthrough {
+		t.Fatalf("Screen = %q, want walkthrough", model.Screen)
+	}
+	if model.Session.Plan.Overview != expected.Plan.Overview {
+		t.Fatalf("Overview = %q", model.Session.Plan.Overview)
+	}
+}
+
+func TestStartReviewFailureShowsError(t *testing.T) {
+	model := NewModelWithStarter(review.ReviewSession{}, func(context.Context) (review.ReviewSession, error) {
+		return review.ReviewSession{}, errors.New("no open GitHub pull request found")
+	})
+
+	updated, cmd := model.Update(key("R"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	if model.Loading {
+		t.Fatal("did not expect loading after failure")
+	}
+	if model.Err == nil {
+		t.Fatal("expected error")
+	}
+	if model.Screen != ScreenStartup {
+		t.Fatalf("Screen = %q, want startup", model.Screen)
+	}
+	if got := model.View(); !contains(got, "no open GitHub pull request found") {
+		t.Fatalf("View() = %q, want error text", got)
+	}
+}
+
 func key(value string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+func contains(s string, substr string) bool {
+	return strings.Contains(s, substr)
 }
