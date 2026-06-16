@@ -1,0 +1,38 @@
+[tools]
+go = "1.26.2"
+hk = "1.44.3"
+pkl = "latest"
+
+[tasks.fmt]
+description = "Format Go code"
+run = "go fmt ./..."
+
+[tasks.tidy]
+description = "Tidy Go module files"
+run = "go mod tidy"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.check]
+description = "Run formatting, module, vet, test, and hook checks"
+run = [
+  "go fmt ./...",
+  "go mod tidy",
+  "go vet ./...",
+  "go test ./...",
+  "hk check",
+]
+
+[tasks.pre-commit]
+description = "Run pre-commit hook"
+run = "hk run pre-commit"
+
+[tasks.install-hooks]
+description = "Install hk-managed git hooks"
+run = "hk install"
