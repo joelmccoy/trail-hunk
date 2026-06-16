@@ -68,3 +68,26 @@ func TestFindPullRequestsForBranchQueriesOpenHead(t *testing.T) {
 		t.Fatalf("Number = %d, want 12", prs[0].Number)
 	}
 }
+
+func TestPullRequestDiffRequestsDiffMediaType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/joelmccoy/trail-hunk/pulls/12" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Accept"); got != githubDiffMediaType {
+			t.Fatalf("Accept = %q, want %s", got, githubDiffMediaType)
+		}
+
+		_, _ = w.Write([]byte("diff --git a/app.go b/app.go\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(server.URL, "abc123")
+	diff, err := client.PullRequestDiff(context.Background(), "joelmccoy", "trail-hunk", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != "diff --git a/app.go b/app.go\n" {
+		t.Fatalf("diff = %q", diff)
+	}
+}

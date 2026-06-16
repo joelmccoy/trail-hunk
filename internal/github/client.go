@@ -13,6 +13,7 @@ import (
 const (
 	defaultBaseURL      = "https://api.github.com"
 	githubJSONMediaType = "application/vnd.github+json"
+	githubDiffMediaType = "application/vnd.github.v3.diff"
 )
 
 type Client struct {
@@ -79,4 +80,34 @@ func (c *Client) DoJSON(ctx context.Context, method string, path string, in any,
 		return fmt.Errorf("decode GitHub response: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) DoRaw(ctx context.Context, method string, path string, accept string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+"/"+strings.TrimLeft(path, "/"), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create GitHub request: %w", err)
+	}
+	req.Header.Set("Accept", accept)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send GitHub request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("GitHub API %s %s returned %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return io.ReadAll(resp.Body)
 }

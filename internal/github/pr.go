@@ -45,3 +45,12 @@ func (c *Client) FindPullRequestsForBranch(ctx context.Context, owner, repo, bra
 	}
 	return prs, nil
 }
+
+func (c *Client) PullRequestDiff(ctx context.Context, owner, repo string, number int) (string, error) {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
+	raw, err := c.DoRaw(ctx, http.MethodGet, path, githubDiffMediaType)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}

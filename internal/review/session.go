@@ -1,10 +1,25 @@
 package review
 
 type ReviewSession struct {
+	Repo     RepoRef
+	PR       PullRequest
 	Plan     WalkthroughPlan
 	Cursor   ReviewCursor
 	Comments []ReviewComment
 	nextID   int
+}
+
+type RepoRef struct {
+	Owner  string
+	Name   string
+	Root   string
+	Branch string
+}
+
+type PullRequest struct {
+	Number int
+	Title  string
+	Body   string
 }
 
 type WalkthroughPlan struct {

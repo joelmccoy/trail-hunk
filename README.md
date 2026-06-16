@@ -38,3 +38,19 @@ Run the placeholder TUI:
 go run ./cmd/trail-hunk
 ```
 
+## Auth And Providers
+
+GitHub auth is local-first. The app will use `GITHUB_TOKEN` when set and will
+otherwise fall back to `gh auth token`.
+
+```sh
+gh auth login
+TRAIL_HUNK_PROVIDER=codex go run ./cmd/trail-hunk
+TRAIL_HUNK_PROVIDER=claude TRAIL_HUNK_MODEL=sonnet go run ./cmd/trail-hunk
+```
+
+## Architecture Decisions
+
+Important architecture decisions are recorded as lightweight ADRs in
+`docs/adr/`. Add a new ADR when changing package boundaries, provider behavior,
+GitHub API strategy, diff/comment mapping, or TUI state architecture.
