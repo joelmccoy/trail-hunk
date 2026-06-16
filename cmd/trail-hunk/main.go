@@ -43,10 +43,18 @@ func main() {
 
 		return app.RunReview(ctx, ".", deps)
 	}
+	submitter := func(ctx context.Context, session review.ReviewSession) error {
+		token, err := github.DiscoverToken(ctx)
+		if err != nil {
+			return err
+		}
+		return app.SubmitApprovedReview(ctx, session, github.NewClient("", token))
+	}
 
 	model := tui.NewModelWithOptions(review.ReviewSession{}, tui.Options{
-		ReviewStarter: starter,
-		StartupLoader: startupLoader,
+		ReviewStarter:   starter,
+		StartupLoader:   startupLoader,
+		ReviewSubmitter: submitter,
 	})
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "trail-hunk: %v\n", err)

@@ -12,10 +12,12 @@ import (
 
 type ReviewStarter func(ctx context.Context) (review.ReviewSession, error)
 type StartupLoader func(ctx context.Context) (review.StartupContext, error)
+type ReviewSubmitter func(ctx context.Context, session review.ReviewSession) error
 
 type Options struct {
-	ReviewStarter ReviewStarter
-	StartupLoader StartupLoader
+	ReviewStarter   ReviewStarter
+	StartupLoader   StartupLoader
+	ReviewSubmitter ReviewSubmitter
 }
 
 type Model struct {
@@ -31,9 +33,11 @@ type Model struct {
 	ShowAskPane        bool
 	SelectedSuggestion int
 	Loading            bool
+	Submitting         bool
 	Err                error
 	starter            ReviewStarter
 	startupLoader      StartupLoader
+	submitter          ReviewSubmitter
 }
 
 func NewModel(session review.ReviewSession) Model {
@@ -51,6 +55,7 @@ func NewModelWithOptions(session review.ReviewSession, opts Options) Model {
 		FocusedPane:    "diff",
 		starter:        opts.ReviewStarter,
 		startupLoader:  opts.StartupLoader,
+		submitter:      opts.ReviewSubmitter,
 		StartupLoading: opts.StartupLoader != nil,
 	}
 }
@@ -109,6 +114,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSelectedSuggestion(review.StatusApproved)
 		case keyDismissComment:
 			m.updateSelectedSuggestion(review.StatusDismissed)
+		case keyComments:
+			m.Screen = ScreenComments
+		case keySubmitReview:
+			if m.Submitting {
+				return m, nil
+			}
+			if m.submitter == nil {
+				m.Err = fmt.Errorf("review submission is not configured")
+				return m, nil
+			}
+			if len(m.Session.ApprovedComments()) == 0 {
+				m.Err = fmt.Errorf("no approved comments to submit")
+				return m, nil
+			}
+			m.Submitting = true
+			m.Err = nil
+			return m, submitReviewCmd(m.submitter, m.Session)
 		}
 	case reviewStartedMsg:
 		m.Loading = false
@@ -125,6 +147,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.Screen = ScreenOverview
 		}
+	case reviewSubmittedMsg:
+		m.Submitting = false
+		if msg.Err != nil {
+			m.Err = msg.Err
+			return m, nil
+		}
+		m.Err = nil
+		m.Session.MarkApprovedSubmitted()
+		m.Screen = ScreenComments
 	}
 
 	return m, nil
@@ -199,7 +230,7 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderFooter() string {
-	return "R review  q quit  n/p step  j/k pick  a accept  d drop  f files  t ask"
+	return "R review C queue S submit q quit n/p step j/k pick a ok d drop f files t ask"
 }
 
 type reviewStartedMsg struct {
@@ -210,6 +241,10 @@ type reviewStartedMsg struct {
 type startupLoadedMsg struct {
 	Startup review.StartupContext
 	Err     error
+}
+
+type reviewSubmittedMsg struct {
+	Err error
 }
 
 func loadStartupCmd(loader StartupLoader) tea.Cmd {
@@ -226,15 +261,14 @@ func startReviewCmd(starter ReviewStarter) tea.Cmd {
 	}
 }
 
+func submitReviewCmd(submitter ReviewSubmitter, session review.ReviewSession) tea.Cmd {
+	return func() tea.Msg {
+		return reviewSubmittedMsg{Err: submitter(context.Background(), session)}
+	}
+}
+
 func renderStartup(m Model) string {
-	width := contentWidth(m.Width, 8)
-	if width <= 0 {
-		width = 72
-	}
-	panelWidth := width
-	if panelWidth > 68 {
-		panelWidth = 68
-	}
+	panelWidth := panelWidth(m.Width)
 
 	var sections []string
 	if m.StartupLoading {
@@ -316,7 +350,29 @@ func renderWalkthrough(m Model) string {
 
 func renderComments(m Model) string {
 	approved := m.Session.ApprovedComments()
-	return fmt.Sprintf("%d approved comments\n", len(approved))
+	panelWidth := panelWidth(m.Width)
+
+	var lines []string
+	if m.Submitting {
+		lines = append(lines, "Submitting approved comments to GitHub...")
+	}
+	if len(approved) == 0 {
+		lines = append(lines, "No approved comments yet.")
+	} else {
+		lines = append(lines, fmt.Sprintf("%d approved comments ready.", len(approved)))
+		for _, comment := range approved {
+			target := comment.FilePath
+			if comment.Line > 0 {
+				target = fmt.Sprintf("%s:%d", comment.FilePath, comment.Line)
+			}
+			lines = append(lines, fmt.Sprintf("- [%s] %s — %s", comment.Priority, target, comment.Body))
+		}
+	}
+	if m.Err != nil {
+		lines = append(lines, "", "error: "+m.Err.Error())
+	}
+	lines = append(lines, "", "Press S to submit approved comments.")
+	return infoPanel("Comment Queue", lines, panelWidth)
 }
 
 func (m *Model) selectSuggestion(delta int) {
@@ -387,6 +443,17 @@ func contentWidth(totalWidth int, horizontalPadding int) int {
 	width := totalWidth - horizontalPadding
 	if width < 1 {
 		return 1
+	}
+	return width
+}
+
+func panelWidth(totalWidth int) int {
+	width := contentWidth(totalWidth, 16)
+	if width <= 0 {
+		return 64
+	}
+	if width > 68 {
+		return 68
 	}
 	return width
 }

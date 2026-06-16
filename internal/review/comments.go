@@ -80,6 +80,22 @@ func (s ReviewSession) ApprovedComments() []ReviewComment {
 	return approved
 }
 
+func (s *ReviewSession) MarkApprovedSubmitted() {
+	for i := range s.Comments {
+		if s.Comments[i].Status == StatusApproved || s.Comments[i].Status == StatusEdited {
+			s.Comments[i].Status = StatusSubmitted
+		}
+	}
+	for stepIndex := range s.Plan.ReviewOrder {
+		for suggestionIndex := range s.Plan.ReviewOrder[stepIndex].Suggestions {
+			status := s.Plan.ReviewOrder[stepIndex].Suggestions[suggestionIndex].Status
+			if status == StatusApproved || status == StatusEdited {
+				s.Plan.ReviewOrder[stepIndex].Suggestions[suggestionIndex].Status = StatusSubmitted
+			}
+		}
+	}
+}
+
 func (s *ReviewSession) findComment(id string) (*ReviewComment, error) {
 	for i := range s.Comments {
 		if s.Comments[i].ID == id {

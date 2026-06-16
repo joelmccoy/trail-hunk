@@ -113,6 +113,54 @@ func TestSuggestionSelectionAndActions(t *testing.T) {
 	}
 }
 
+func TestCommentQueueAndSubmit(t *testing.T) {
+	submitted := false
+	model := NewModelWithOptions(review.ReviewSession{
+		Comments: []review.ReviewComment{
+			{ID: "c1", Body: "Approved suggestion", Status: review.StatusApproved},
+			{ID: "c2", Body: "Dismissed suggestion", Status: review.StatusDismissed},
+		},
+	}, Options{
+		ReviewSubmitter: func(context.Context, review.ReviewSession) error {
+			submitted = true
+			return nil
+		},
+	})
+
+	updated, _ := model.Update(key("C"))
+	model = updated.(Model)
+	if model.Screen != ScreenComments {
+		t.Fatalf("Screen = %q, want comments", model.Screen)
+	}
+	if !strings.Contains(model.View(), "Approved suggestion") {
+		t.Fatalf("View() = %q, want approved comment", model.View())
+	}
+	if strings.Contains(model.View(), "Dismissed suggestion") {
+		t.Fatalf("View() = %q, did not want dismissed comment", model.View())
+	}
+
+	updated, cmd := model.Update(key("S"))
+	model = updated.(Model)
+	if !model.Submitting {
+		t.Fatal("expected submitting state")
+	}
+	if cmd == nil {
+		t.Fatal("expected submit command")
+	}
+
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	if !submitted {
+		t.Fatal("submitter was not called")
+	}
+	if model.Submitting {
+		t.Fatal("did not expect submitting after success")
+	}
+	if model.Session.Comments[0].Status != review.StatusSubmitted {
+		t.Fatalf("Status = %q, want submitted", model.Session.Comments[0].Status)
+	}
+}
+
 func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
 	expected := review.ReviewSession{
 		Plan: review.WalkthroughPlan{
@@ -214,6 +262,10 @@ func TestViewLinesFitTerminalWidth(t *testing.T) {
 		if width := lipgloss.Width(line); width > model.Width {
 			t.Fatalf("line %d width = %d, want <= %d: %q", i, width, model.Width, line)
 		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "─╮" || trimmed == "─╯" {
+			t.Fatalf("line %d has orphaned border cap: %q", i, line)
+		}
 	}
 }
 
@@ -237,6 +289,19 @@ func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
 	}
 	if !strings.Contains(footer, "t ask") {
 		t.Fatalf("footer = %q, want t ask on same line", footer)
+	}
+}
+
+func TestCommentsScreenLinesFitTerminalWidth(t *testing.T) {
+	model := NewModel(review.ReviewSession{})
+	model.Width = 80
+	model.Height = 20
+	model.Screen = ScreenComments
+
+	for i, line := range strings.Split(model.View(), "\n") {
+		if width := lipgloss.Width(line); width > model.Width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i, width, model.Width, line)
+		}
 	}
 }
 

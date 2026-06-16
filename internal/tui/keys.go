@@ -11,4 +11,6 @@ const (
 	keySelectPrevious = "k"
 	keyAcceptComment  = "a"
 	keyDismissComment = "d"
+	keyComments       = "C"
+	keySubmitReview   = "S"
 )
