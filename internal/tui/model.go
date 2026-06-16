@@ -268,17 +268,19 @@ func submitReviewCmd(submitter ReviewSubmitter, session review.ReviewSession) te
 }
 
 func renderStartup(m Model) string {
-	panelWidth := panelWidth(m.Width)
-
-	var sections []string
+	var panels []func(int) string
 	if m.StartupLoading {
-		sections = append(sections, statusPanel("Detecting PR", "Checking local git context and GitHub pull requests.", panelWidth, lipgloss.Color("63")))
+		panels = append(panels, func(width int) string {
+			return statusPanel("Detecting PR", "Checking local git context and GitHub pull requests.", width, lipgloss.Color("63"))
+		})
 	}
 	if m.Startup.Repo.Owner != "" {
-		sections = append(sections, infoPanel("Repository", []string{
-			fmt.Sprintf("%s/%s", m.Startup.Repo.Owner, m.Startup.Repo.Name),
-			fmt.Sprintf("branch: %s", m.Startup.Repo.Branch),
-		}, panelWidth))
+		panels = append(panels, func(width int) string {
+			return infoPanel("Repository", []string{
+				fmt.Sprintf("%s/%s", m.Startup.Repo.Owner, m.Startup.Repo.Name),
+				fmt.Sprintf("branch: %s", m.Startup.Repo.Branch),
+			}, width)
+		})
 	}
 	if m.Startup.PR != nil {
 		lines := []string{fmt.Sprintf("#%d %s", m.Startup.PR.Number, m.Startup.PR.Title)}
@@ -288,26 +290,39 @@ func renderStartup(m Model) string {
 		if m.Startup.PR.URL != "" {
 			lines = append(lines, m.Startup.PR.URL)
 		}
-		sections = append(sections, statusPanel("Current PR", strings.Join(lines, "\n"), panelWidth, lipgloss.Color("36")))
+		body := strings.Join(lines, "\n")
+		panels = append(panels, func(width int) string {
+			return statusPanel("Current PR", body, width, lipgloss.Color("36"))
+		})
 	} else if m.Startup.Message != "" {
-		sections = append(sections, statusPanel("No PR Found", m.Startup.Message, panelWidth, lipgloss.Color("178")))
+		panels = append(panels, func(width int) string {
+			return statusPanel("No PR Found", m.Startup.Message, width, lipgloss.Color("178"))
+		})
 	}
 	if m.Loading {
-		sections = append(sections, statusPanel("Generating Review", "Resolving git, GitHub PR context, diff, and AI walkthrough.", panelWidth, lipgloss.Color("63")))
-		return strings.Join(sections, "\n\n")
+		panels = append(panels, func(width int) string {
+			return statusPanel("Generating Review", "Resolving git, GitHub PR context, diff, and AI walkthrough.", width, lipgloss.Color("63"))
+		})
+		return renderPanelGrid(m.Width, panels)
 	}
 
-	sections = append(sections, infoPanel("Next", []string{
-		"Press R to initiate a guided review.",
-		"Configure provider with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.",
-	}, panelWidth))
+	panels = append(panels, func(width int) string {
+		return infoPanel("Next", []string{
+			"Press R to initiate a guided review.",
+			"Configure provider with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.",
+		}, width)
+	})
 	if m.StartupErr != nil {
-		sections = append(sections, statusPanel("Startup Error", m.StartupErr.Error(), panelWidth, lipgloss.Color("203")))
+		panels = append(panels, func(width int) string {
+			return statusPanel("Startup Error", m.StartupErr.Error(), width, lipgloss.Color("203"))
+		})
 	}
 	if m.Err != nil {
-		sections = append(sections, statusPanel("Review Error", m.Err.Error(), panelWidth, lipgloss.Color("203")))
+		panels = append(panels, func(width int) string {
+			return statusPanel("Review Error", m.Err.Error(), width, lipgloss.Color("203"))
+		})
 	}
-	return strings.Join(sections, "\n\n")
+	return renderPanelGrid(m.Width, panels)
 }
 
 func renderWalkthrough(m Model) string {
@@ -456,6 +471,41 @@ func panelWidth(totalWidth int) int {
 		return 68
 	}
 	return width
+}
+
+func renderPanelGrid(totalWidth int, panels []func(int) string) string {
+	if len(panels) == 0 {
+		return ""
+	}
+
+	if totalWidth >= 120 && len(panels) > 1 {
+		availableWidth := contentWidth(totalWidth, 8)
+		gap := 4
+		columnTotalWidth := (availableWidth - gap) / 2
+		panelContentWidth := contentWidth(columnTotalWidth, 4)
+		if panelContentWidth < 24 {
+			panelContentWidth = 24
+		}
+
+		var rows []string
+		for i := 0; i < len(panels); i += 2 {
+			left := panels[i](panelContentWidth)
+			if i+1 >= len(panels) {
+				rows = append(rows, left)
+				continue
+			}
+			right := panels[i+1](panelContentWidth)
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right))
+		}
+		return strings.Join(rows, "\n\n")
+	}
+
+	panelWidth := panelWidth(totalWidth)
+	var rendered []string
+	for _, panel := range panels {
+		rendered = append(rendered, panel(panelWidth))
+	}
+	return strings.Join(rendered, "\n\n")
 }
 
 func infoPanel(title string, lines []string, width int) string {

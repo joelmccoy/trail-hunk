@@ -269,6 +269,23 @@ func TestViewLinesFitTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestStartupUsesWideLayout(t *testing.T) {
+	model := NewModel(review.ReviewSession{})
+	model.Width = 160
+	model.Height = 32
+	model.Startup = review.StartupContext{
+		Repo:    review.RepoRef{Owner: "joelmccoy", Name: "trail-hunk", Branch: "main"},
+		Message: `No open GitHub pull request found for branch "main".`,
+	}
+
+	for _, line := range strings.Split(model.View(), "\n") {
+		if strings.Count(line, "╭") >= 2 {
+			return
+		}
+	}
+	t.Fatalf("wide startup view did not render two columns: %q", model.View())
+}
+
 func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
 	model := NewModel(review.ReviewSession{})
 	model.Width = 80
