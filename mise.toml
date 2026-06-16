@@ -36,3 +36,15 @@ run = "hk run pre-commit"
 [tasks.install-hooks]
 description = "Install hk-managed git hooks"
 run = "hk install"
+
+[tasks."dev:dummy-pr"]
+description = "Create or reuse an isolated draft GitHub PR for local workflow testing"
+run = "scripts/dev-dummy-pr.sh setup"
+
+[tasks."dev:dummy-pr:reset"]
+description = "Recreate the isolated dummy PR worktree and branch from origin/main"
+run = "scripts/dev-dummy-pr.sh reset"
+
+[tasks."dev:dummy-pr:dry-run"]
+description = "Print the dummy PR workflow without mutating git or GitHub"
+run = "scripts/dev-dummy-pr.sh setup --dry-run"

@@ -44,6 +44,36 @@ branch's GitHub pull request. Press `q` to quit.
 The TUI runs in Bubble Tea's alternate screen mode, so it behaves like a
 full-screen terminal application and restores your shell when it exits.
 
+### Dummy PR Workflow
+
+For end-to-end local testing, create an isolated draft PR with reviewable dummy
+changes:
+
+```sh
+mise run dev:dummy-pr
+```
+
+The task creates or reuses `.dev/worktrees/dummy-pr` on branch
+`trail-hunk-dev/dummy-pr`, pushes that branch, and opens or reuses a draft PR
+targeting `main`. Your current `main` checkout is left alone.
+
+Then run the app from the dummy PR worktree:
+
+```sh
+cd .dev/worktrees/dummy-pr
+go run ./cmd/trail-hunk
+```
+
+Useful variants:
+
+```sh
+mise run dev:dummy-pr:dry-run
+mise run dev:dummy-pr:reset
+```
+
+The dry run prints the planned git and GitHub actions. The reset task removes
+and recreates the local dummy worktree and force-updates the dummy branch.
+
 ## Auth And Providers
 
 GitHub auth is local-first. The app will use `GITHUB_TOKEN` when set and will
