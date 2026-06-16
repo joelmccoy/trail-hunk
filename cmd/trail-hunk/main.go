@@ -6,35 +6,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joelmccoy/trail-hunk/internal/app"
+	"github.com/joelmccoy/trail-hunk/internal/review"
+	"github.com/joelmccoy/trail-hunk/internal/tui"
 )
-
-type model struct{}
-
-func (model) Init() tea.Cmd {
-	return nil
-}
-
-func (model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return model{}, tea.Quit
-		}
-	}
-
-	return model{}, nil
-}
-
-func (model) View() string {
-	return "trail-hunk\n\nAI-assisted GitHub PR review TUI.\n\nPress q to quit.\n"
-}
 
 func main() {
 	cfg := app.ConfigFromEnv()
 	_ = cfg
 
-	if _, err := tea.NewProgram(model{}).Run(); err != nil {
+	if _, err := tea.NewProgram(tui.NewModel(review.ReviewSession{})).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "trail-hunk: %v\n", err)
 		os.Exit(1)
 	}
