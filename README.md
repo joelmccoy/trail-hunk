@@ -46,8 +46,30 @@ full-screen terminal application and restores your shell when it exits.
 
 ### Dummy PR Workflow
 
-For end-to-end local testing, create an isolated draft PR with reviewable dummy
-changes:
+For the quickest end-to-end test of your current local trail-hunk code, create
+or update a draft PR from the current checkout and launch the app inside the PR
+worktree:
+
+```sh
+mise run dev:review-current
+```
+
+The task creates `.dev/worktrees/review-current` on branch
+`trail-hunk-dev/review-current`, based on your current `HEAD`. It then overlays
+your tracked diff plus untracked non-ignored files into that worktree, commits
+the snapshot there, pushes the branch, opens or reuses a draft PR targeting
+`main`, and starts `go run ./cmd/trail-hunk` from the generated worktree. Your
+active checkout is not modified.
+
+Useful variants:
+
+```sh
+mise run dev:review-current:dry-run
+mise run dev:review-current:setup
+mise run dev:review-current:reset
+```
+
+For a stable fixture PR with known reviewable dummy changes, use:
 
 ```sh
 mise run dev:dummy-pr

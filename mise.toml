@@ -13,7 +13,11 @@ run = "go mod tidy"
 
 [tasks.test]
 description = "Run Go tests"
-run = "go test ./..."
+run = [
+  "go test ./...",
+  "bash scripts/test-dev-dummy-pr.sh",
+  "bash scripts/test-dev-review-current.sh",
+]
 
 [tasks.vet]
 description = "Run go vet"
@@ -26,6 +30,8 @@ run = [
   "go mod tidy",
   "go vet ./...",
   "go test ./...",
+  "bash scripts/test-dev-dummy-pr.sh",
+  "bash scripts/test-dev-review-current.sh",
   "hk check",
 ]
 
@@ -48,3 +54,19 @@ run = "scripts/dev-dummy-pr.sh reset"
 [tasks."dev:dummy-pr:dry-run"]
 description = "Print the dummy PR workflow without mutating git or GitHub"
 run = "scripts/dev-dummy-pr.sh setup --dry-run"
+
+[tasks."dev:review-current"]
+description = "Create or update a draft PR from the current checkout and open trail-hunk in its worktree"
+run = "scripts/dev-review-current.sh open"
+
+[tasks."dev:review-current:setup"]
+description = "Create or update a draft PR from the current checkout without opening trail-hunk"
+run = "scripts/dev-review-current.sh setup"
+
+[tasks."dev:review-current:reset"]
+description = "Remove the generated review-current worktree and local branch"
+run = "scripts/dev-review-current.sh reset"
+
+[tasks."dev:review-current:dry-run"]
+description = "Print the review-current workflow without mutating git or GitHub"
+run = "scripts/dev-review-current.sh open --dry-run"
