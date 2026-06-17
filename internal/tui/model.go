@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joelmccoy/trail-hunk/internal/review"
@@ -32,9 +33,12 @@ type Model struct {
 	ShowFileTree       bool
 	ShowAskPane        bool
 	SelectedSuggestion int
+	Workbench          WorkbenchModel
 	Loading            bool
 	Submitting         bool
 	Err                error
+	keys               keyMap
+	help               help.Model
 	starter            ReviewStarter
 	startupLoader      StartupLoader
 	submitter          ReviewSubmitter
@@ -49,10 +53,14 @@ func NewModelWithStarter(session review.ReviewSession, starter ReviewStarter) Mo
 }
 
 func NewModelWithOptions(session review.ReviewSession, opts Options) Model {
+	keys := defaultKeyMap()
 	return Model{
 		Screen:         ScreenStartup,
 		Session:        session,
 		FocusedPane:    "diff",
+		Workbench:      NewWorkbenchModel(),
+		keys:           keys,
+		help:           newHelpModel(),
 		starter:        opts.ReviewStarter,
 		startupLoader:  opts.StartupLoader,
 		submitter:      opts.ReviewSubmitter,
@@ -84,6 +92,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case keyQuit, "ctrl+c":
 			return m, tea.Quit
+		case keyToggleAskPane:
+			m.ShowAskPane = !m.ShowAskPane
+			if m.ShowAskPane {
+				cmd := m.Workbench.Ask.Focus()
+				return m, cmd
+			}
+			return m, nil
+		}
+		if m.ShowAskPane && m.Screen == ScreenWalkthrough {
+			var cmd tea.Cmd
+			m.Workbench, cmd = m.Workbench.UpdateAsk(msg)
+			return m, cmd
+		}
+		switch msg.String() {
 		case keyStartReview:
 			if m.Loading {
 				return m, nil
@@ -98,17 +120,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, startReviewCmd(m.starter)
 		case keyNextStep:
 			m.Session.NextStep()
+			m.SelectedSuggestion = 0
 			m.Screen = ScreenWalkthrough
 		case keyPreviousStep:
 			m.Session.PreviousStep()
+			m.SelectedSuggestion = 0
 			m.Screen = ScreenWalkthrough
 		case keyToggleFiles:
 			m.ShowFileTree = !m.ShowFileTree
-		case keyToggleAskPane:
-			m.ShowAskPane = !m.ShowAskPane
-		case keySelectNext:
+		case keyMoveDown, "down", keyMoveUp, "up":
+			if m.Screen == ScreenWalkthrough {
+				m.syncWorkbench()
+				var cmd tea.Cmd
+				m.Workbench, cmd = m.Workbench.Update(msg)
+				return m, cmd
+			}
+		case keyNextSuggestion:
 			m.selectSuggestion(1)
-		case keySelectPrevious:
+		case keyPreviousSuggestion:
 			m.selectSuggestion(-1)
 		case keyAcceptComment:
 			m.updateSelectedSuggestion(review.StatusApproved)
@@ -161,9 +190,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) syncWorkbench() {
+	if m.Screen != ScreenWalkthrough {
+		return
+	}
+	if m.Workbench.Width <= 0 || m.Workbench.Height <= 0 {
+		width := maxInt(1, m.Width-4)
+		height := maxInt(1, m.Height-4)
+		m.Workbench.SetSize(width, height)
+	}
+	m.Workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree)
+}
+
 func (m Model) View() string {
 	if m.Width <= 0 {
-		return strings.Join([]string{m.renderHeader(), m.renderBody(80), m.renderFooter(80)}, "\n")
+		return strings.Join([]string{m.renderHeader(), m.renderBody(80, 20), m.renderFooter(80)}, "\n")
 	}
 
 	header := renderHeaderBar(m.renderHeader(), m.Width)
@@ -182,7 +223,9 @@ func (m Model) View() string {
 		bodyStyle = bodyStyle.Padding(0, 1)
 	}
 
-	body := bodyStyle.Render(m.renderBody(contentWidthForStyle(m.Width, bodyStyle)))
+	bodyWidth := contentWidthForStyle(m.Width, bodyStyle)
+	bodyHeight = contentHeightForStyle(bodyHeight, bodyStyle)
+	body := bodyStyle.Render(m.renderBody(bodyWidth, bodyHeight))
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
@@ -197,11 +240,12 @@ func renderHeaderBar(text string, width int) string {
 }
 
 func (m Model) renderFooter(width int) string {
+	helpText := m.help.View(m.keys)
 	return lipgloss.NewStyle().
 		Width(width).
 		Background(lipgloss.Color("235")).
 		Foreground(lipgloss.Color("244")).
-		Render(truncateCells(" "+footerText(width-1), width))
+		Render(truncateCells(" "+helpText, width))
 }
 
 func (m Model) renderHeader() string {
@@ -218,7 +262,7 @@ func (m Model) renderHeader() string {
 	return b.String()
 }
 
-func (m Model) renderBody(width int) string {
+func (m Model) renderBody(width int, height int) string {
 	var b strings.Builder
 	switch m.Screen {
 	case ScreenStartup:
@@ -227,9 +271,9 @@ func (m Model) renderBody(width int) string {
 		b.WriteString(m.Session.Plan.Overview)
 		b.WriteByte('\n')
 	case ScreenWalkthrough:
-		b.WriteString(renderWalkthrough(m, width))
+		b.WriteString(renderWalkthrough(m, width, height))
 	case ScreenComments:
-		b.WriteString(renderComments(m, width))
+		b.WriteString(renderComments(m, width, height))
 	case ScreenSubmit:
 		b.WriteString("Submit approved review comments\n")
 	}
@@ -271,102 +315,61 @@ func submitReviewCmd(submitter ReviewSubmitter, session review.ReviewSession) te
 }
 
 func renderStartup(m Model, width int) string {
-	var panels []func(int) string
+	var lines []string
 	if m.StartupLoading {
-		panels = append(panels, func(width int) string {
-			return statusPanel("Detecting PR", "Checking local git context and GitHub pull requests.", width, lipgloss.Color("63"))
-		})
+		lines = append(lines, startupSection("Detecting PR", []string{"Checking local git context and GitHub pull requests."})...)
 	}
 	if m.Startup.Repo.Owner != "" {
-		panels = append(panels, func(width int) string {
-			return infoPanel("Repository", []string{
-				fmt.Sprintf("%s/%s", m.Startup.Repo.Owner, m.Startup.Repo.Name),
-				fmt.Sprintf("branch: %s", m.Startup.Repo.Branch),
-			}, width)
-		})
+		lines = append(lines, startupSection("Repository", []string{
+			fmt.Sprintf("%s/%s", m.Startup.Repo.Owner, m.Startup.Repo.Name),
+			fmt.Sprintf("branch: %s", m.Startup.Repo.Branch),
+		})...)
 	}
 	if m.Startup.PR != nil {
-		lines := []string{fmt.Sprintf("#%d %s", m.Startup.PR.Number, m.Startup.PR.Title)}
+		prLines := []string{fmt.Sprintf("#%d %s", m.Startup.PR.Number, m.Startup.PR.Title)}
 		if m.Startup.PR.State != "" {
-			lines = append(lines, fmt.Sprintf("state: %s", m.Startup.PR.State))
+			prLines = append(prLines, fmt.Sprintf("state: %s", m.Startup.PR.State))
 		}
 		if m.Startup.PR.URL != "" {
-			lines = append(lines, m.Startup.PR.URL)
+			prLines = append(prLines, m.Startup.PR.URL)
 		}
-		body := strings.Join(lines, "\n")
-		panels = append(panels, func(width int) string {
-			return statusPanel("Current PR", body, width, lipgloss.Color("36"))
-		})
+		lines = append(lines, startupSection("Current PR", prLines)...)
 	} else if m.Startup.Message != "" {
-		panels = append(panels, func(width int) string {
-			return statusPanel("No PR Found", m.Startup.Message, width, lipgloss.Color("178"))
-		})
+		lines = append(lines, startupSection("No PR Found", []string{m.Startup.Message})...)
 	}
 	if m.Loading {
-		panels = append(panels, func(width int) string {
-			return statusPanel("Generating Review", "Resolving git, GitHub PR context, diff, and AI walkthrough.", width, lipgloss.Color("63"))
-		})
-		return renderPanelGrid(width, panels)
+		lines = append(lines, startupSection("Generating Review", []string{"Resolving git, GitHub PR context, diff, and AI walkthrough."})...)
+		return wrapLines(lines, width)
 	}
 
-	panels = append(panels, func(width int) string {
-		return infoPanel("Next", []string{
-			"Press R to initiate a guided review.",
-			"Configure provider with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.",
-		}, width)
-	})
+	lines = append(lines, startupSection("Next", []string{
+		"Press R to initiate a guided review.",
+		"Configure provider with TRAIL_HUNK_PROVIDER and TRAIL_HUNK_MODEL.",
+	})...)
 	if m.StartupErr != nil {
-		panels = append(panels, func(width int) string {
-			return statusPanel("Startup Error", m.StartupErr.Error(), width, lipgloss.Color("203"))
-		})
+		lines = append(lines, startupSection("Startup Error", []string{m.StartupErr.Error()})...)
 	}
 	if m.Err != nil {
-		panels = append(panels, func(width int) string {
-			return statusPanel("Review Error", m.Err.Error(), width, lipgloss.Color("203"))
-		})
+		lines = append(lines, startupSection("Review Error", []string{m.Err.Error()})...)
 	}
-	return renderPanelGrid(width, panels)
+	return wrapLines(lines, width)
 }
 
-func renderWalkthrough(m Model, width int) string {
+func startupSection(title string, body []string) []string {
+	lines := []string{sectionTitle(title)}
+	lines = append(lines, body...)
+	lines = append(lines, "")
+	return lines
+}
+
+func renderWalkthrough(m Model, width int, height int) string {
 	if len(m.Session.Plan.ReviewOrder) == 0 {
 		return "No review steps loaded.\n"
 	}
-
-	step := m.Session.Plan.ReviewOrder[m.Session.Cursor.StepIndex]
-	var panels []func(int) string
-	if m.ShowFileTree {
-		panels = append(panels, func(width int) string {
-			return infoPanel("Files", []string{step.FilePath}, width)
-		})
-	}
-
-	overviewLines := []string{step.Title, "", step.Summary, "", "why: " + step.Why}
-	if len(step.Focus) > 0 {
-		overviewLines = append(overviewLines, "", "focus:")
-		for _, item := range step.Focus {
-			overviewLines = append(overviewLines, "- "+item)
-		}
-	}
-	panels = append(panels, func(width int) string {
-		return infoPanel("Step", overviewLines, width)
-	})
-
-	panels = append(panels, func(width int) string {
-		return diffPanel(step, m.SelectedSuggestion, width)
-	})
-
-	if len(step.Suggestions) > 0 {
-		panels = append(panels, func(width int) string {
-			return suggestionsPanel(step.Suggestions, m.SelectedSuggestion, width)
-		})
-	}
-	if m.ShowAskPane {
-		panels = append(panels, func(width int) string {
-			return statusPanel("Ask", "Ask pane placeholder for current step context.", width, lipgloss.Color("36"))
-		})
-	}
-	return renderPanelGrid(width, panels)
+	workbench := m.Workbench
+	workbench.SetSize(width, height)
+	workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree)
+	return workbench.View(m.Session, m.SelectedSuggestion, m.ShowFileTree, m.ShowAskPane)
 }
 
 func diffPanel(step review.ReviewStep, selectedSuggestion int, width int) string {
@@ -537,11 +540,11 @@ func diffTargetKey(side string, line int) string {
 	return fmt.Sprintf("%s:%d", side, line)
 }
 
-func renderComments(m Model, width int) string {
+func renderComments(m Model, width int, height int) string {
 	approved := m.Session.ApprovedComments()
-	panelWidth := panelWidth(width)
 
 	var lines []string
+	lines = append(lines, sectionTitle("Comment Queue"))
 	if m.Submitting {
 		lines = append(lines, "Submitting approved comments to GitHub...")
 	}
@@ -550,18 +553,14 @@ func renderComments(m Model, width int) string {
 	} else {
 		lines = append(lines, fmt.Sprintf("%d approved comments ready.", len(approved)))
 		for _, comment := range approved {
-			target := comment.FilePath
-			if comment.Line > 0 {
-				target = fmt.Sprintf("%s:%d", comment.FilePath, comment.Line)
-			}
-			lines = append(lines, fmt.Sprintf("- [%s] %s — %s", comment.Priority, target, comment.Body))
+			lines = append(lines, fmt.Sprintf("- [%s/%s] %s - %s", comment.Priority, comment.Status, targetText(comment), comment.Body))
 		}
 	}
 	if m.Err != nil {
 		lines = append(lines, "", "error: "+m.Err.Error())
 	}
 	lines = append(lines, "", "Press S to submit approved comments.")
-	return infoPanel("Comment Queue", lines, panelWidth)
+	return forceBlock(wrapLines(lines, width), width, height)
 }
 
 func (m *Model) selectSuggestion(delta int) {
@@ -634,6 +633,14 @@ func contentWidthForStyle(totalWidth int, style lipgloss.Style) int {
 		return 1
 	}
 	return width
+}
+
+func contentHeightForStyle(totalHeight int, style lipgloss.Style) int {
+	height := totalHeight - style.GetVerticalFrameSize()
+	if height < 1 {
+		return 1
+	}
+	return height
 }
 
 func panelWidth(totalWidth int) int {

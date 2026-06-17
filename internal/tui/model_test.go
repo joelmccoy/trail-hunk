@@ -85,7 +85,7 @@ func TestSuggestionSelectionAndActions(t *testing.T) {
 	})
 	model.Screen = ScreenWalkthrough
 
-	updated, _ := model.Update(key("j"))
+	updated, _ := model.Update(key("J"))
 	model = updated.(Model)
 	if model.SelectedSuggestion != 1 {
 		t.Fatalf("SelectedSuggestion = %d, want 1", model.SelectedSuggestion)
@@ -100,7 +100,7 @@ func TestSuggestionSelectionAndActions(t *testing.T) {
 		t.Fatalf("step suggestion status = %q, want approved", model.Session.Plan.ReviewOrder[0].Suggestions[1].Status)
 	}
 
-	updated, _ = model.Update(key("k"))
+	updated, _ = model.Update(key("K"))
 	model = updated.(Model)
 	if model.SelectedSuggestion != 0 {
 		t.Fatalf("SelectedSuggestion = %d, want 0", model.SelectedSuggestion)
@@ -253,6 +253,122 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 	}
 }
 
+func TestRenderDiffRowsShowsTargetAndStatusMarkers(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	step := model.Session.Plan.ReviewOrder[0]
+
+	rendered := renderDiffRows(step, 1, 100)
+
+	for _, want := range []string{"old", "new", ">>", "note", "func helper() {}", "Check helper visibility."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered diff missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestWalkthroughUsesWorkbenchNotCardGrid(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 140
+	model.Height = 34
+
+	view := model.View()
+
+	if strings.Contains(view, "╭") || strings.Contains(view, "╰") {
+		t.Fatalf("workbench should not render decorative card borders:\n%s", view)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width != model.Width {
+			t.Fatalf("line %d width = %d, want %d: %q", i, width, model.Width, line)
+		}
+	}
+}
+
+func TestSuggestionNavigationHighlightsTargetLine(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 120
+	model.Height = 32
+
+	updated, _ := model.Update(key("J"))
+	model = updated.(Model)
+
+	view := model.View()
+	if model.SelectedSuggestion != 1 {
+		t.Fatalf("SelectedSuggestion = %d, want 1", model.SelectedSuggestion)
+	}
+	if !strings.Contains(view, ">>") {
+		t.Fatalf("selected suggestion target was not highlighted:\n%s", view)
+	}
+	if !strings.Contains(view, "Check helper visibility.") {
+		t.Fatalf("inspector did not show selected suggestion:\n%s", view)
+	}
+}
+
+func TestApproveUpdatesWorkbenchSuggestionState(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 120
+	model.Height = 32
+
+	updated, _ := model.Update(key("a"))
+	model = updated.(Model)
+
+	view := model.View()
+	if !strings.Contains(view, "approved") {
+		t.Fatalf("approved status missing from workbench:\n%s", view)
+	}
+}
+
+func TestCommentQueueUsesPlainWorkbenchStyle(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 100
+	model.Height = 24
+	updated, _ := model.Update(key("a"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("C"))
+	model = updated.(Model)
+
+	view := model.View()
+	if strings.Contains(view, "╭") || strings.Contains(view, "╰") {
+		t.Fatalf("comment queue should not render decorative card borders:\n%s", view)
+	}
+	if !strings.Contains(view, "approved") {
+		t.Fatalf("comment queue missing approved comment:\n%s", view)
+	}
+}
+
+func TestAskDrawerAcceptsTypedInput(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 120
+	model.Height = 32
+
+	updated, _ := model.Update(key("t"))
+	model = updated.(Model)
+	updated, _ = model.Update(key("w"))
+	model = updated.(Model)
+
+	view := model.View()
+	if !strings.Contains(view, "ask current context") {
+		t.Fatalf("ask drawer missing:\n%s", view)
+	}
+	if got := model.Workbench.Ask.Value(); got != "w" {
+		t.Fatalf("ask drawer input = %q, want %q", got, "w")
+	}
+}
+
+func TestMoveKeysScrollFocusedDiffViewport(t *testing.T) {
+	model := walkthroughModelWithLongDiff()
+	model.Width = 100
+	model.Height = 12
+	model.Workbench.SetSize(96, 8)
+	model.Workbench.Sync(model.Session, model.SelectedSuggestion, false)
+
+	updated, _ := model.Update(key("j"))
+	model = updated.(Model)
+
+	if model.Workbench.Diff.YOffset == 0 {
+		t.Fatalf("expected j to scroll diff viewport")
+	}
+}
+
 func TestDiffPanelCentersSuggestedLines(t *testing.T) {
 	var lines []review.DiffLine
 	for line := 1; line <= 20; line++ {
@@ -364,7 +480,7 @@ func TestViewLinesFitTerminalWidth(t *testing.T) {
 	}
 }
 
-func TestStartupUsesWideLayout(t *testing.T) {
+func TestStartupUsesPlainFullWidthLayout(t *testing.T) {
 	model := NewModel(review.ReviewSession{})
 	model.Width = 160
 	model.Height = 32
@@ -373,15 +489,13 @@ func TestStartupUsesWideLayout(t *testing.T) {
 		Message: `No open GitHub pull request found for branch "main".`,
 	}
 
-	for _, line := range strings.Split(model.View(), "\n") {
-		if strings.Count(line, "╭") >= 2 {
-			if width := lipgloss.Width(line); width < 120 {
-				t.Fatalf("wide startup row width = %d, want it to use most of the terminal: %q", width, line)
-			}
-			return
-		}
+	view := model.View()
+	if strings.Contains(view, "╭") || strings.Contains(view, "╰") {
+		t.Fatalf("startup should not render decorative card borders:\n%s", view)
 	}
-	t.Fatalf("wide startup view did not render two columns: %q", model.View())
+	if !strings.Contains(view, "Repository") || !strings.Contains(view, "No PR Found") {
+		t.Fatalf("startup missing expected sections:\n%s", view)
+	}
 }
 
 func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
@@ -402,6 +516,21 @@ func TestFooterMenuDoesNotWrapAtNormalWidth(t *testing.T) {
 		if strings.TrimSpace(footer) == "" {
 			t.Fatalf("footer is empty at width %d", width)
 		}
+	}
+}
+
+func TestFooterUsesGeneratedKeyHelp(t *testing.T) {
+	model := NewModel(review.ReviewSession{})
+	model.Width = 120
+	model.Height = 24
+
+	view := model.View()
+
+	if !strings.Contains(view, "R review") {
+		t.Fatalf("footer missing review key help:\n%s", view)
+	}
+	if !strings.Contains(view, "tab focus") {
+		t.Fatalf("footer missing focus key help:\n%s", view)
 	}
 }
 
@@ -449,6 +578,59 @@ func key(value string) tea.KeyMsg {
 
 func intPtr(value int) *int {
 	return &value
+}
+
+func walkthroughModelWithDiff() Model {
+	oldLine := 2
+	newLine := 2
+	anotherNewLine := 3
+	model := NewModel(review.ReviewSession{
+		Plan: review.WalkthroughPlan{
+			Overview: "Adds a guided review flow.",
+			ReviewOrder: []review.ReviewStep{
+				{
+					ID:       "step-1",
+					FilePath: "app.go",
+					Title:    "Review rename",
+					Summary:  "A function was renamed.",
+					Why:      "Callers may need updates.",
+					Focus:    []string{"Confirm callers are updated."},
+					DiffLines: []review.DiffLine{
+						{Kind: review.DiffLineContext, OldLine: intPtr(1), NewLine: intPtr(1), Text: "package main"},
+						{Kind: review.DiffLineDeleted, OldLine: &oldLine, Text: "func oldName() {}"},
+						{Kind: review.DiffLineAdded, NewLine: &newLine, Text: "func newName() {}"},
+						{Kind: review.DiffLineAdded, NewLine: &anotherNewLine, Text: "func helper() {}"},
+					},
+					Suggestions: []review.ReviewComment{
+						{ID: "c1", FilePath: "app.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
+						{ID: "c2", FilePath: "app.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
+					},
+				},
+			},
+		},
+		Comments: []review.ReviewComment{
+			{ID: "c1", FilePath: "app.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
+			{ID: "c2", FilePath: "app.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
+		},
+	})
+	model.Screen = ScreenWalkthrough
+	return model
+}
+
+func walkthroughModelWithLongDiff() Model {
+	model := walkthroughModelWithDiff()
+	var lines []review.DiffLine
+	for line := 1; line <= 40; line++ {
+		lines = append(lines, review.DiffLine{
+			Kind:    review.DiffLineAdded,
+			NewLine: intPtr(line),
+			Text:    "line body",
+		})
+	}
+	model.Session.Plan.ReviewOrder[0].DiffLines = lines
+	model.Session.Plan.ReviewOrder[0].Suggestions = nil
+	model.Session.Comments = nil
+	return model
 }
 
 func contains(s string, substr string) bool {
