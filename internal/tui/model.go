@@ -353,7 +353,7 @@ func renderWalkthrough(m Model, width int) string {
 	})
 
 	panels = append(panels, func(width int) string {
-		return diffPanel(step, width)
+		return diffPanel(step, m.SelectedSuggestion, width)
 	})
 
 	if len(step.Suggestions) > 0 {
@@ -369,7 +369,7 @@ func renderWalkthrough(m Model, width int) string {
 	return renderPanelGrid(width, panels)
 }
 
-func diffPanel(step review.ReviewStep, width int) string {
+func diffPanel(step review.ReviewStep, selectedSuggestion int, width int) string {
 	var lines []string
 	if step.FilePath != "" {
 		lines = append(lines, step.FilePath)
@@ -378,10 +378,62 @@ func diffPanel(step review.ReviewStep, width int) string {
 		lines = append(lines, "No diff lines mapped for this step.")
 		return statusPanel("Diff", strings.Join(lines, "\n"), width, lipgloss.Color("178"))
 	}
-	for _, line := range step.DiffLines {
-		lines = append(lines, renderDiffLine(line))
+	lines = append(lines, diffHeader())
+	targets := suggestionTargets(step.Suggestions, selectedSuggestion)
+	for _, line := range focusedDiffLines(step.DiffLines, targets, 0) {
+		if line.Text == omittedDiffText {
+			lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("..."))
+			continue
+		}
+		lines = append(lines, renderDiffLine(line, targets))
 	}
 	return statusPanel("Diff", strings.Join(lines, "\n"), width, lipgloss.Color("63"))
+}
+
+const omittedDiffText = "__trail_hunk_omitted_diff_context__"
+
+func focusedDiffLines(lines []review.DiffLine, targets map[string]diffTarget, contextRadius int) []review.DiffLine {
+	if len(lines) == 0 || len(targets) == 0 {
+		return lines
+	}
+
+	first := len(lines)
+	last := -1
+	for i, line := range lines {
+		target := targetForDiffLine(line, targets)
+		if target.Label == "" {
+			continue
+		}
+		if i < first {
+			first = i
+		}
+		if i > last {
+			last = i
+		}
+	}
+	if last == -1 {
+		return lines
+	}
+
+	start := maxInt(0, first-contextRadius)
+	end := last + contextRadius
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+
+	var focused []review.DiffLine
+	if start > 0 {
+		focused = append(focused, omittedDiffLine())
+	}
+	focused = append(focused, lines[start:end+1]...)
+	if end < len(lines)-1 {
+		focused = append(focused, omittedDiffLine())
+	}
+	return focused
+}
+
+func omittedDiffLine() review.DiffLine {
+	return review.DiffLine{Kind: review.DiffLineContext, Text: omittedDiffText}
 }
 
 func suggestionsPanel(suggestions []review.ReviewComment, selected int, width int) string {
@@ -401,15 +453,57 @@ func suggestionsPanel(suggestions []review.ReviewComment, selected int, width in
 	return infoPanel("Suggestions", lines, width)
 }
 
-func renderDiffLine(line review.DiffLine) string {
+type diffTarget struct {
+	Label   string
+	Current bool
+}
+
+func suggestionTargets(suggestions []review.ReviewComment, selected int) map[string]diffTarget {
+	targets := make(map[string]diffTarget)
+	for i, suggestion := range suggestions {
+		if suggestion.Line <= 0 {
+			continue
+		}
+		side := suggestion.Side
+		if side == "" {
+			side = "RIGHT"
+		}
+		label := "note"
+		if i == selected {
+			label = "focus"
+		}
+		targets[diffTargetKey(side, suggestion.Line)] = diffTarget{
+			Label:   label,
+			Current: i == selected,
+		}
+	}
+	return targets
+}
+
+func diffHeader() string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Render("mark    old    new  code")
+}
+
+func renderDiffLine(line review.DiffLine, targets map[string]diffTarget) string {
 	marker := " "
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	switch line.Kind {
 	case review.DiffLineAdded:
 		marker = "+"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	case review.DiffLineDeleted:
 		marker = "-"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 	}
-	return fmt.Sprintf("%s %s %s", marker, renderLineNumbers(line), line.Text)
+
+	target := targetForDiffLine(line, targets)
+	row := fmt.Sprintf("%-5s %s  %s%s", target.Label, renderLineNumbers(line), marker, line.Text)
+	if target.Current {
+		style = style.Bold(true).Background(lipgloss.Color("236"))
+	}
+	return style.Render(row)
 }
 
 func renderLineNumbers(line review.DiffLine) string {
@@ -422,6 +516,25 @@ func renderLineNumbers(line review.DiffLine) string {
 		newLine = fmt.Sprintf("%d", *line.NewLine)
 	}
 	return fmt.Sprintf("%4s %4s", oldLine, newLine)
+}
+
+func targetForDiffLine(line review.DiffLine, targets map[string]diffTarget) diffTarget {
+	switch line.Kind {
+	case review.DiffLineDeleted:
+		if line.OldLine == nil {
+			return diffTarget{}
+		}
+		return targets[diffTargetKey("LEFT", *line.OldLine)]
+	default:
+		if line.NewLine == nil {
+			return diffTarget{}
+		}
+		return targets[diffTargetKey("RIGHT", *line.NewLine)]
+	}
+}
+
+func diffTargetKey(side string, line int) string {
+	return fmt.Sprintf("%s:%d", side, line)
 }
 
 func renderComments(m Model, width int) string {

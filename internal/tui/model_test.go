@@ -208,6 +208,7 @@ func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
 func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 	oldLine := 2
 	newLine := 2
+	anotherNewLine := 3
 	model := NewModel(review.ReviewSession{
 		Plan: review.WalkthroughPlan{
 			ReviewOrder: []review.ReviewStep{
@@ -221,15 +222,18 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 						{Kind: review.DiffLineContext, OldLine: intPtr(1), NewLine: intPtr(1), Text: "package main"},
 						{Kind: review.DiffLineDeleted, OldLine: &oldLine, Text: "func oldName() {}"},
 						{Kind: review.DiffLineAdded, NewLine: &newLine, Text: "func newName() {}"},
+						{Kind: review.DiffLineAdded, NewLine: &anotherNewLine, Text: "func helper() {}"},
 					},
 					Suggestions: []review.ReviewComment{
-						{ID: "c1", Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Status: review.StatusSuggested},
+						{ID: "c1", FilePath: "app.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Status: review.StatusSuggested},
+						{ID: "c2", FilePath: "app.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Status: review.StatusSuggested},
 					},
 				},
 			},
 		},
 		Comments: []review.ReviewComment{
 			{ID: "c1", Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Status: review.StatusSuggested},
+			{ID: "c2", Body: "Check helper visibility.", Priority: review.PriorityLow, Status: review.StatusSuggested},
 		},
 	})
 	model.Screen = ScreenWalkthrough
@@ -237,7 +241,7 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 	model.Height = 32
 
 	view := model.View()
-	for _, want := range []string{"Review rename", "Diff", "func oldName() {}", "func newName() {}", "Suggestions", "Confirm callers"} {
+	for _, want := range []string{"Review rename", "Diff", "old", "new", "note", "focus", "func newName() {}", "func helper() {}", "Suggestions", "Confirm callers"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
 		}
@@ -246,6 +250,37 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 		if width := lipgloss.Width(line); width != model.Width {
 			t.Fatalf("line %d width = %d, want %d: %q", i, width, model.Width, line)
 		}
+	}
+}
+
+func TestDiffPanelCentersSuggestedLines(t *testing.T) {
+	var lines []review.DiffLine
+	for line := 1; line <= 20; line++ {
+		lines = append(lines, review.DiffLine{
+			Kind:    review.DiffLineAdded,
+			NewLine: intPtr(line),
+			Text:    "line body",
+		})
+	}
+	panel := diffPanel(review.ReviewStep{
+		FilePath:  "app.go",
+		DiffLines: lines,
+		Suggestions: []review.ReviewComment{
+			{ID: "c1", Side: "RIGHT", Line: 14, Status: review.StatusSuggested},
+		},
+	}, 0, 80)
+
+	if !strings.Contains(panel, "focus") {
+		t.Fatalf("diff panel did not mark selected target:\n%s", panel)
+	}
+	if !strings.Contains(panel, "14") {
+		t.Fatalf("diff panel did not include target line 14:\n%s", panel)
+	}
+	if strings.Contains(panel, " 1  +line body") {
+		t.Fatalf("diff panel did not elide unrelated top context:\n%s", panel)
+	}
+	if !strings.Contains(panel, "...") {
+		t.Fatalf("diff panel did not show omitted context marker:\n%s", panel)
 	}
 }
 
