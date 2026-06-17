@@ -21,6 +21,8 @@ func NewAIProvider(cfg Config) (ai.Provider, error) {
 		return ai.NewCodexProvider(cfg.Model), nil
 	case "claude":
 		return ai.NewClaudeProvider(cfg.Model), nil
+	case "fixture":
+		return ai.NewFixtureProvider(), nil
 	default:
 		return nil, fmt.Errorf("unsupported AI provider %q", cfg.Provider)
 	}

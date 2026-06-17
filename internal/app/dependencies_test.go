@@ -22,6 +22,16 @@ func TestNewAIProviderSelectsClaude(t *testing.T) {
 	}
 }
 
+func TestNewAIProviderSelectsFixture(t *testing.T) {
+	provider, err := NewAIProvider(Config{Provider: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.Name() != "fixture" {
+		t.Fatalf("Name = %q, want fixture", provider.Name())
+	}
+}
+
 func TestNewAIProviderRejectsUnknownProvider(t *testing.T) {
 	_, err := NewAIProvider(Config{Provider: "unknown"})
 	if err == nil {

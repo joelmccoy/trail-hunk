@@ -4,16 +4,18 @@ set -euo pipefail
 branch="trail-hunk-dev/dummy-pr"
 base_branch="main"
 worktree_name="dummy-pr"
-mode="setup"
+mode="open"
 dry_run=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/dev-dummy-pr.sh [setup|reset] [--dry-run]
+Usage: scripts/dev-dummy-pr.sh [open|setup|reset] [--dry-run]
 
-Creates or refreshes a real draft GitHub pull request from an isolated worktree.
+Creates or refreshes a real draft GitHub pull request from an isolated worktree
+and runs trail-hunk with deterministic fixture AI data.
 
 Commands:
+  open       Create/update the dummy PR worktree and launch trail-hunk. This is the default.
   setup      Create/update the dummy PR worktree, branch, commit, push, and draft PR.
   reset      Remove the dummy worktree and recreate the dummy PR branch from origin/main.
 
@@ -24,11 +26,8 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    setup)
-      mode="setup"
-      ;;
-    reset)
-      mode="reset"
+    open|setup|reset)
+      mode="$1"
       ;;
     --dry-run)
       dry_run=1
@@ -51,6 +50,12 @@ worktree="$repo_root/.dev/worktrees/$worktree_name"
 fixture_dir="$worktree/dev/fixtures/dummy-pr"
 fixture_file="$fixture_dir/review_target.go"
 remote_url="$(git -C "$repo_root" config --get remote.origin.url || true)"
+source_head="$(git -C "$repo_root" rev-parse --short HEAD)"
+source_ref="$(git -C "$repo_root" rev-parse HEAD)"
+source_branch="$(git -C "$repo_root" branch --show-current)"
+if [[ -z "$source_branch" ]]; then
+  source_branch="detached-$source_head"
+fi
 
 run() {
   if [[ "$dry_run" -eq 1 ]]; then
@@ -80,15 +85,21 @@ branch: $branch
 base: $base_branch
 worktree: $worktree
 remote: ${remote_url:-unknown}
+provider: fixture
+source: $source_branch@$source_head
+snapshot: current checkout plus dummy fixture
 
 next:
   cd $worktree
-  go run ./cmd/trail-hunk
+  TRAIL_HUNK_PROVIDER=fixture go run ./cmd/trail-hunk
 SUMMARY
 }
 
 ensure_clean_repo() {
   if [[ "$dry_run" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "$mode" != "reset" ]]; then
     return 0
   fi
 
@@ -109,15 +120,46 @@ remove_worktree() {
   fi
 }
 
-create_worktree() {
-  run git -C "$repo_root" fetch origin "$base_branch"
-  run git -C "$repo_root" worktree prune
-
+delete_local_branch() {
   if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch"; then
     run git -C "$repo_root" branch -D "$branch"
   fi
+}
 
-  run git -C "$repo_root" worktree add -B "$branch" "$worktree" "origin/$base_branch"
+create_worktree() {
+  run git -C "$repo_root" fetch origin "$base_branch"
+  run git -C "$repo_root" worktree prune
+  remove_worktree
+  delete_local_branch
+
+  run git -C "$repo_root" worktree add -B "$branch" "$worktree" "$source_ref"
+}
+
+apply_tracked_diff() {
+  if git -C "$repo_root" diff --quiet HEAD --; then
+    return 0
+  fi
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    run git -C "$repo_root" diff --binary HEAD
+    run git -C "$worktree" apply --binary
+    return 0
+  fi
+
+  git -C "$repo_root" diff --binary HEAD | git -C "$worktree" apply --binary
+}
+
+copy_untracked_files() {
+  if [[ "$dry_run" -eq 1 ]]; then
+    run git -C "$repo_root" ls-files --others --exclude-standard
+    run cp "<untracked non-ignored files>" "$worktree"
+    return 0
+  fi
+
+  while IFS= read -r -d '' path; do
+    mkdir -p "$worktree/$(dirname "$path")"
+    cp -R "$repo_root/$path" "$worktree/$path"
+  done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
 }
 
 seed_fixture() {
@@ -161,18 +203,18 @@ func NormalizeDisplayName(name string) string {
 GO
 }
 
-commit_fixture() {
-  run git -C "$worktree" add dev/fixtures/dummy-pr/review_target.go
+commit_snapshot() {
+  run git -C "$worktree" add -A
   if [[ "$dry_run" -eq 1 ]]; then
-    run git -C "$worktree" commit -m "test: add dummy review target"
+    run git -C "$worktree" commit -m "dev: snapshot dummy review workflow"
     return 0
   fi
 
   if git -C "$worktree" diff --cached --quiet; then
-    printf 'dummy fixture is unchanged; leaving existing commit state intact\n'
+    printf 'no changes to snapshot\n'
     return 0
   fi
-  run git -C "$worktree" commit -m "test: add dummy review target"
+  run git -C "$worktree" commit -m "dev: snapshot dummy review workflow"
 }
 
 push_and_open_pr() {
@@ -198,6 +240,21 @@ push_and_open_pr() {
     --head "$branch" \
     --title "Dummy PR for trail-hunk workflow testing" \
     --body "$(pr_body)"
+}
+
+launch_tui() {
+  if [[ "$mode" != "open" ]]; then
+    return 0
+  fi
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    run bash -lc "cd '$worktree' && TRAIL_HUNK_PROVIDER=fixture go run ./cmd/trail-hunk"
+    return 0
+  fi
+
+  cd "$worktree"
+  export TRAIL_HUNK_PROVIDER=fixture
+  exec go run ./cmd/trail-hunk
 }
 
 gh_repo_slug() {
@@ -237,21 +294,21 @@ main() {
 
   if [[ "$mode" == "reset" ]]; then
     remove_worktree
+    delete_local_branch
   fi
 
-  if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    create_worktree
-  else
-    printf 'using existing worktree: %s\n' "$worktree"
-  fi
-
+  create_worktree
+  apply_tracked_diff
+  copy_untracked_files
   seed_fixture
-  commit_fixture
+  commit_snapshot
   push_and_open_pr
 
   printf '\nready:\n'
   printf '  cd %s\n' "$worktree"
-  printf '  go run ./cmd/trail-hunk\n'
+  printf '  TRAIL_HUNK_PROVIDER=fixture go run ./cmd/trail-hunk\n'
+
+  launch_tui
 }
 
 main

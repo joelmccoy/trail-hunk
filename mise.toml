@@ -43,6 +43,10 @@ run = "hk run pre-commit"
 description = "Install hk-managed git hooks"
 run = "hk install"
 
+[tasks.dev]
+description = "Create the dummy PR and open trail-hunk with deterministic fixture review data"
+run = "scripts/dev-dummy-pr.sh open"
+
 [tasks."dev:dummy-pr"]
 description = "Create or reuse an isolated draft GitHub PR for local workflow testing"
 run = "scripts/dev-dummy-pr.sh setup"
@@ -53,7 +57,7 @@ run = "scripts/dev-dummy-pr.sh reset"
 
 [tasks."dev:dummy-pr:dry-run"]
 description = "Print the dummy PR workflow without mutating git or GitHub"
-run = "scripts/dev-dummy-pr.sh setup --dry-run"
+run = "scripts/dev-dummy-pr.sh open --dry-run"
 
 [tasks."dev:review-current"]
 description = "Create or update a draft PR from the current checkout and open trail-hunk in its worktree"
