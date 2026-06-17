@@ -85,6 +85,7 @@ source: $source_branch@$source_head
 worktree: $worktree
 remote: ${remote_url:-unknown}
 snapshot: tracked diff plus untracked non-ignored files
+fallback: ensure reviewable diff when the current checkout matches $base_branch
 
 next:
   cd $worktree
@@ -156,6 +157,34 @@ commit_snapshot() {
   run git -C "$worktree" commit -m "dev: snapshot current trail-hunk checkout"
 }
 
+ensure_reviewable_diff() {
+  if [[ "$dry_run" -eq 1 ]]; then
+    run git -C "$worktree" diff --quiet "origin/$base_branch...HEAD"
+    run mkdir -p "$worktree/dev/fixtures/review-current"
+    run tee "$worktree/dev/fixtures/review-current/keepalive.md"
+    run git -C "$worktree" add dev/fixtures/review-current/keepalive.md
+    run git -C "$worktree" commit -m "dev: keep review-current pr open"
+    return 0
+  fi
+
+  if ! git -C "$worktree" diff --quiet "origin/$base_branch...HEAD"; then
+    return 0
+  fi
+
+  mkdir -p "$worktree/dev/fixtures/review-current"
+  cat >"$worktree/dev/fixtures/review-current/keepalive.md" <<BODY
+# review-current fallback
+
+This file keeps the generated review-current pull request open when the source
+checkout has no file diff against $base_branch.
+
+Source branch: $source_branch
+Source commit: $source_ref
+BODY
+  run git -C "$worktree" add dev/fixtures/review-current/keepalive.md
+  run git -C "$worktree" commit -m "dev: keep review-current pr open"
+}
+
 push_and_open_pr() {
   run git -C "$worktree" push --force-with-lease -u origin "$branch"
 
@@ -167,9 +196,19 @@ push_and_open_pr() {
 
   local repo
   repo="$(gh_repo_slug)"
-  if gh pr view "$branch" --repo "$repo" >/dev/null 2>&1; then
+  local pr_fields
+  pr_fields="$(gh pr view "$branch" --repo "$repo" --json number,state,url --jq '[.number, .state, .url] | @tsv' 2>/dev/null || true)"
+  if [[ -n "$pr_fields" ]]; then
+    local pr_number pr_state pr_url
+    IFS=$'\t' read -r pr_number pr_state pr_url <<<"$pr_fields"
+    if [[ "$pr_state" == "CLOSED" ]]; then
+      run gh pr reopen "$pr_number" --repo "$repo"
+    elif [[ "$pr_state" == "MERGED" ]]; then
+      printf 'review-current PR was merged; close it manually and rerun with a fresh branch name\n' >&2
+      exit 1
+    fi
     printf 'reusing existing draft PR for %s\n' "$branch"
-    gh pr view "$branch" --repo "$repo" --json url --jq .url
+    printf '%s\n' "$pr_url"
     return 0
   fi
 
@@ -238,6 +277,7 @@ main() {
   apply_tracked_diff
   copy_untracked_files
   commit_snapshot
+  ensure_reviewable_diff
   push_and_open_pr
 
   printf '\nready:\n'
