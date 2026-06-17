@@ -51,8 +51,14 @@ func TestToggleKeys(t *testing.T) {
 
 	updated, _ := model.Update(key("f"))
 	model = updated.(Model)
+	if model.ShowFileTree {
+		t.Fatal("expected file tree hidden after first toggle")
+	}
+
+	updated, _ = model.Update(key("f"))
+	model = updated.(Model)
 	if !model.ShowFileTree {
-		t.Fatal("expected file tree visible")
+		t.Fatal("expected file tree visible after second toggle")
 	}
 
 	updated, _ = model.Update(key("t"))
@@ -214,7 +220,7 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 			ReviewOrder: []review.ReviewStep{
 				{
 					ID:       "step-1",
-					FilePath: "app.go",
+					FilePath: "dev/fixtures/dummy-pr/review_target.go",
 					Title:    "Review rename",
 					Summary:  "A function was renamed.",
 					Why:      "Callers may need updates.",
@@ -241,7 +247,7 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 	model.Height = 32
 
 	view := model.View()
-	for _, want := range []string{"Review rename", "Diff", "old", "new", "note", "focus", "func newName() {}", "func helper() {}", "Suggestions", "Confirm callers"} {
+	for _, want := range []string{"Review rename", "Diff", "old", "new", "note", ">>", "func newName() {}", "func helper() {}", "suggested comment", "Confirm callers"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
 		}
@@ -366,6 +372,77 @@ func TestMoveKeysScrollFocusedDiffViewport(t *testing.T) {
 
 	if model.Workbench.Diff.YOffset == 0 {
 		t.Fatalf("expected j to scroll diff viewport")
+	}
+}
+
+func TestWorkbenchShowsChangedFileRailByDefault(t *testing.T) {
+	model := walkthroughModelWithMultipleFiles()
+	model.Width = 160
+	model.Height = 34
+
+	view := model.View()
+
+	for _, want := range []string{"Changed Files", "review_target.go", "orchestration.go", "Access guard", "Map diff lines"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("workbench missing %q:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "▶ review_target.go") {
+		t.Fatalf("current file is not highlighted:\n%s", view)
+	}
+	if !strings.Contains(view, "▶ Access guard") {
+		t.Fatalf("current step is not highlighted:\n%s", view)
+	}
+}
+
+func TestWorkbenchRendersFindingsAsInlineAnnotations(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	step := model.Session.Plan.ReviewOrder[0]
+
+	rendered := renderDiffRows(step, 0, 120)
+	codeLine := lineContaining(rendered, "func newName()")
+	if strings.Contains(codeLine, "Confirm callers were updated.") {
+		t.Fatalf("code row contains finding prose: %q\n%s", codeLine, rendered)
+	}
+	if !strings.Contains(rendered, "suggested comment") {
+		t.Fatalf("inline annotation label missing:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "a approve") || !strings.Contains(rendered, "d dismiss") {
+		t.Fatalf("annotation actions missing:\n%s", rendered)
+	}
+}
+
+func TestWorkbenchRightPaneExplainsCurrentChunk(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+
+	view := model.View()
+
+	for _, want := range []string{"What this chunk does", "Why it matters", "Used by / impact", "How to review", "Confidence"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("right pane missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "selected comment") {
+		t.Fatalf("right pane should not be a finding detail panel:\n%s", view)
+	}
+}
+
+func TestFileNavigationJumpsToNextChangedFile(t *testing.T) {
+	model := walkthroughModelWithMultipleFiles()
+
+	updated, _ := model.Update(key("]"))
+	model = updated.(Model)
+
+	if got := model.Session.Plan.ReviewOrder[model.Session.Cursor.StepIndex].FilePath; got != "internal/app/orchestration.go" {
+		t.Fatalf("current file = %q, want internal/app/orchestration.go", got)
+	}
+
+	updated, _ = model.Update(key("["))
+	model = updated.(Model)
+	if got := model.Session.Plan.ReviewOrder[model.Session.Cursor.StepIndex].FilePath; got != "dev/fixtures/dummy-pr/review_target.go" {
+		t.Fatalf("current file = %q, want dev/fixtures/dummy-pr/review_target.go", got)
 	}
 }
 
@@ -590,8 +667,8 @@ func walkthroughModelWithDiff() Model {
 			ReviewOrder: []review.ReviewStep{
 				{
 					ID:       "step-1",
-					FilePath: "app.go",
-					Title:    "Review rename",
+					FilePath: "dev/fixtures/dummy-pr/review_target.go",
+					Title:    "Access guard",
 					Summary:  "A function was renamed.",
 					Why:      "Callers may need updates.",
 					Focus:    []string{"Confirm callers are updated."},
@@ -602,18 +679,46 @@ func walkthroughModelWithDiff() Model {
 						{Kind: review.DiffLineAdded, NewLine: &anotherNewLine, Text: "func helper() {}"},
 					},
 					Suggestions: []review.ReviewComment{
-						{ID: "c1", FilePath: "app.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
-						{ID: "c2", FilePath: "app.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
+						{ID: "c1", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
+						{ID: "c2", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
 					},
 				},
 			},
 		},
 		Comments: []review.ReviewComment{
-			{ID: "c1", FilePath: "app.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
-			{ID: "c2", FilePath: "app.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
+			{ID: "c1", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 2, Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Category: review.CategoryBug, Status: review.StatusSuggested},
+			{ID: "c2", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 3, Body: "Check helper visibility.", Priority: review.PriorityLow, Category: review.CategoryMaintainability, Status: review.StatusSuggested},
 		},
 	})
 	model.Screen = ScreenWalkthrough
+	return model
+}
+
+func walkthroughModelWithMultipleFiles() Model {
+	model := walkthroughModelWithDiff()
+	line := 9
+	model.Session.Plan.ReviewOrder = append(model.Session.Plan.ReviewOrder,
+		review.ReviewStep{
+			ID:       "step-2",
+			FilePath: "dev/fixtures/dummy-pr/review_target.go",
+			Title:    "Admin bypass",
+			Summary:  "Admin accounts bypass ownership checks.",
+			Why:      "The policy should be explicit.",
+			DiffLines: []review.DiffLine{
+				{Kind: review.DiffLineAdded, NewLine: intPtr(18), Text: "return true"},
+			},
+		},
+		review.ReviewStep{
+			ID:       "step-3",
+			FilePath: "internal/app/orchestration.go",
+			Title:    "Map diff lines",
+			Summary:  "Review steps receive mapped diff lines.",
+			Why:      "The TUI needs display-ready hunk data.",
+			DiffLines: []review.DiffLine{
+				{Kind: review.DiffLineAdded, NewLine: &line, Text: "step.DiffLines = mapped"},
+			},
+		},
+	)
 	return model
 }
 
@@ -631,6 +736,15 @@ func walkthroughModelWithLongDiff() Model {
 	model.Session.Plan.ReviewOrder[0].Suggestions = nil
 	model.Session.Comments = nil
 	return model
+}
+
+func lineContaining(text string, needle string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
 }
 
 func contains(s string, substr string) bool {

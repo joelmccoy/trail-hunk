@@ -146,9 +146,9 @@ func workbenchLayout(width int, showFiles bool) layoutSpec {
 
 	railWidth := 0
 	if showFiles {
-		railWidth = 28
+		railWidth = 32
 	}
-	inspectorWidth := 36
+	inspectorWidth := 42
 	separators := 1
 	if railWidth > 0 {
 		separators++
@@ -179,56 +179,128 @@ func currentStep(session review.ReviewSession) (review.ReviewStep, bool) {
 
 func renderRail(session review.ReviewSession, width int, height int) string {
 	var lines []string
-	lines = append(lines, sectionTitle("files"))
+	current, _ := currentStep(session)
+	lines = append(lines, sectionTitle("Changed Files"))
+	lines = append(lines, mutedText("f focus/toggle  j/k move  enter jump"))
+	files := orderedStepFiles(session)
+	for _, file := range files {
+		filePrefix := "  "
+		if file == current.FilePath {
+			filePrefix = "▶ "
+		}
+		lines = append(lines, truncateCells(filePrefix+compactPath(file, width-2), width))
+		lines = append(lines, mutedText(fmt.Sprintf("  %d findings", suggestionCountForFile(session, file))))
+		for _, stepIndex := range stepIndexesForFile(session, file) {
+			step := session.Plan.ReviewOrder[stepIndex]
+			stepPrefix := "    "
+			if stepIndex == session.Cursor.StepIndex {
+				stepPrefix = "  ▶ "
+			}
+			lines = append(lines, truncateCells(stepPrefix+step.Title, width))
+		}
+		lines = append(lines, "")
+	}
+	lines = append(lines, sectionTitle("Review Progress"))
+	lines = append(lines, fmt.Sprintf("%d/%d steps", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder)))
+	lines = append(lines, fmt.Sprintf("%d approved", len(session.ApprovedComments())))
+	return pane(FocusRail, FocusRail, "review map", strings.Join(lines, "\n"), width, height)
+}
+
+func orderedStepFiles(session review.ReviewSession) []string {
 	seen := map[string]bool{}
+	var files []string
 	for index, step := range session.Plan.ReviewOrder {
-		if seen[step.FilePath] {
+		if step.FilePath == "" || seen[step.FilePath] {
 			continue
 		}
 		seen[step.FilePath] = true
-		prefix := "  "
-		if index == session.Cursor.StepIndex {
-			prefix = "> "
-		}
-		lines = append(lines, prefix+step.FilePath)
+		files = append(files, session.Plan.ReviewOrder[index].FilePath)
 	}
-	lines = append(lines, "", sectionTitle("steps"))
-	for index, step := range session.Plan.ReviewOrder {
-		prefix := "  "
-		if index == session.Cursor.StepIndex {
-			prefix = "> "
+	return files
+}
+
+func stepIndexesForFile(session review.ReviewSession, file string) []int {
+	var indexes []int
+	for i, step := range session.Plan.ReviewOrder {
+		if step.FilePath == file {
+			indexes = append(indexes, i)
 		}
-		lines = append(lines, truncateCells(fmt.Sprintf("%s%s", prefix, step.Title), width))
 	}
-	return pane(FocusRail, FocusRail, "review map", strings.Join(lines, "\n"), width, height)
+	return indexes
+}
+
+func suggestionCountForFile(session review.ReviewSession, file string) int {
+	count := 0
+	for _, step := range session.Plan.ReviewOrder {
+		if step.FilePath == file {
+			count += len(step.Suggestions)
+		}
+	}
+	return count
+}
+
+func compactPath(path string, width int) string {
+	if width < 1 || lipgloss.Width(path) <= width {
+		return path
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) <= 1 {
+		return truncateCells(path, width)
+	}
+	return truncateCells(parts[len(parts)-1], width)
 }
 
 func renderInspector(session review.ReviewSession, step review.ReviewStep, selectedSuggestion int, width int) string {
 	var lines []string
+	lines = append(lines, mutedText(fmt.Sprintf("step %d/%d", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder))))
 	lines = append(lines, sectionTitle(step.Title))
+	lines = append(lines, "", sectionTitle("What this chunk does"))
 	if step.Summary != "" {
 		lines = append(lines, step.Summary)
+	} else {
+		lines = append(lines, "This walkthrough step focuses on the displayed diff chunk.")
 	}
 	if step.Why != "" {
-		lines = append(lines, "", sectionTitle("why"), step.Why)
+		lines = append(lines, "", sectionTitle("Why it matters"), step.Why)
 	}
+	lines = append(lines, "", sectionTitle("Used by / impact"))
+	lines = append(lines, impactSummary(step))
+	lines = append(lines, "", sectionTitle("How to review"))
 	if len(step.Focus) > 0 {
-		lines = append(lines, "", sectionTitle("focus"))
 		for _, item := range step.Focus {
 			lines = append(lines, "- "+item)
 		}
-	}
-	if suggestion, ok := selectedReviewComment(step.Suggestions, selectedSuggestion); ok {
-		lines = append(lines, "", sectionTitle("Suggestions"))
-		lines = append(lines, fmt.Sprintf("%s / %s / %s", suggestion.Priority, suggestion.Category, suggestion.Status))
-		lines = append(lines, targetText(suggestion))
-		lines = append(lines, "", suggestion.Body)
+	} else {
+		lines = append(lines, "- Read the changed lines in order.")
+		lines = append(lines, "- Check whether the behavior matches the PR intent.")
 	}
 	approved := len(session.ApprovedComments())
+	lines = append(lines, "", sectionTitle("Confidence"))
+	lines = append(lines, confidenceSummary(step))
 	if approved > 0 {
 		lines = append(lines, "", sectionTitle("queue"), fmt.Sprintf("%d approved", approved))
 	}
 	return wrapLines(lines, width)
+}
+
+func impactSummary(step review.ReviewStep) string {
+	if step.FilePath == "" {
+		return "Impact depends on callers of this changed chunk."
+	}
+	if strings.Contains(step.FilePath, "github") {
+		return "This code affects GitHub diff/comment mapping and can change review submission behavior."
+	}
+	if strings.Contains(step.FilePath, "app") {
+		return "This code affects orchestration between git, GitHub context, AI output, and the TUI session."
+	}
+	return "Review callers that depend on this file; behavior here can affect every downstream use of the changed helper."
+}
+
+func confidenceSummary(step review.ReviewStep) string {
+	if len(step.Suggestions) == 0 {
+		return "Medium confidence. No inline findings are attached to this chunk, but behavior still needs review."
+	}
+	return fmt.Sprintf("Medium confidence. %d inline finding(s) need reviewer judgment before this chunk is considered clear.", len(step.Suggestions))
 }
 
 func selectedReviewComment(suggestions []review.ReviewComment, selected int) (review.ReviewComment, bool) {
@@ -267,6 +339,10 @@ func sectionTitle(text string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render(text)
 }
 
+func mutedText(text string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(text)
+}
+
 func verticalSeparator(height int) string {
 	if height < 1 {
 		return ""
@@ -296,13 +372,40 @@ func wrapLines(lines []string, width int) string {
 			wrapped = append(wrapped, "")
 			continue
 		}
-		for lipgloss.Width(line) > width {
-			wrapped = append(wrapped, truncateCells(line, width))
-			line = strings.TrimSpace(line[minInt(len(line), maxInt(1, minInt(len(line), width/2))):])
-		}
-		wrapped = append(wrapped, line)
+		wrapped = append(wrapped, splitBlock(wordWrap(line, width))...)
 	}
 	return strings.Join(wrapped, "\n")
+}
+
+func wordWrap(text string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	var lines []string
+	for _, sourceLine := range strings.Split(text, "\n") {
+		words := strings.Fields(sourceLine)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		current := ""
+		for _, word := range words {
+			if current == "" {
+				current = word
+				continue
+			}
+			if lipgloss.Width(current+" "+word) <= width {
+				current += " " + word
+				continue
+			}
+			lines = append(lines, truncateCells(current, width))
+			current = word
+		}
+		if current != "" {
+			lines = append(lines, truncateCells(current, width))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func fitContent(content string, width int, height int) string {

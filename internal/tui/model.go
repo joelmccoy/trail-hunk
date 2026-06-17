@@ -58,6 +58,7 @@ func NewModelWithOptions(session review.ReviewSession, opts Options) Model {
 		Screen:         ScreenStartup,
 		Session:        session,
 		FocusedPane:    "diff",
+		ShowFileTree:   true,
 		Workbench:      NewWorkbenchModel(),
 		keys:           keys,
 		help:           newHelpModel(),
@@ -125,6 +126,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyPreviousStep:
 			m.Session.PreviousStep()
 			m.SelectedSuggestion = 0
+			m.Screen = ScreenWalkthrough
+		case keyNextFile:
+			m.selectFile(1)
+			m.Screen = ScreenWalkthrough
+		case keyPreviousFile:
+			m.selectFile(-1)
 			m.Screen = ScreenWalkthrough
 		case keyToggleFiles:
 			m.ShowFileTree = !m.ShowFileTree
@@ -576,6 +583,40 @@ func (m *Model) selectSuggestion(delta int) {
 	}
 	if m.SelectedSuggestion >= len(suggestions) {
 		m.SelectedSuggestion = 0
+	}
+}
+
+func (m *Model) selectFile(delta int) {
+	if len(m.Session.Plan.ReviewOrder) == 0 {
+		return
+	}
+	currentFile := m.Session.Plan.ReviewOrder[m.Session.Cursor.StepIndex].FilePath
+	files := orderedStepFiles(m.Session)
+	if len(files) == 0 {
+		return
+	}
+
+	currentFileIndex := 0
+	for i, file := range files {
+		if file == currentFile {
+			currentFileIndex = i
+			break
+		}
+	}
+	nextFileIndex := currentFileIndex + delta
+	if nextFileIndex < 0 {
+		nextFileIndex = len(files) - 1
+	}
+	if nextFileIndex >= len(files) {
+		nextFileIndex = 0
+	}
+	targetFile := files[nextFileIndex]
+	for i, step := range m.Session.Plan.ReviewOrder {
+		if step.FilePath == targetFile {
+			m.Session.Cursor.StepIndex = i
+			m.SelectedSuggestion = 0
+			return
+		}
 	}
 }
 

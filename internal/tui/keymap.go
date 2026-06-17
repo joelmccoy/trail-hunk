@@ -14,6 +14,8 @@ type keyMap struct {
 	PreviousStep       bubblekey.Binding
 	NextSuggestion     bubblekey.Binding
 	PreviousSuggestion bubblekey.Binding
+	NextFile           bubblekey.Binding
+	PreviousFile       bubblekey.Binding
 	Accept             bubblekey.Binding
 	Dismiss            bubblekey.Binding
 	Queue              bubblekey.Binding
@@ -58,6 +60,14 @@ func defaultKeyMap() keyMap {
 		PreviousSuggestion: bubblekey.NewBinding(
 			bubblekey.WithKeys(keyPreviousSuggestion),
 			bubblekey.WithHelp("K", "note"),
+		),
+		NextFile: bubblekey.NewBinding(
+			bubblekey.WithKeys(keyNextFile),
+			bubblekey.WithHelp("]", "file"),
+		),
+		PreviousFile: bubblekey.NewBinding(
+			bubblekey.WithKeys(keyPreviousFile),
+			bubblekey.WithHelp("[", "file"),
 		),
 		Accept: bubblekey.NewBinding(
 			bubblekey.WithKeys(keyAcceptComment),
@@ -106,6 +116,8 @@ func (k keyMap) ShortHelp() []bubblekey.Binding {
 		k.MoveUp,
 		k.NextStep,
 		k.PreviousStep,
+		k.NextFile,
+		k.PreviousFile,
 		k.Accept,
 		k.Dismiss,
 		k.Queue,
@@ -119,7 +131,7 @@ func (k keyMap) ShortHelp() []bubblekey.Binding {
 func (k keyMap) FullHelp() [][]bubblekey.Binding {
 	return [][]bubblekey.Binding{
 		{k.StartReview, k.FocusNext, k.MoveDown, k.MoveUp, k.NextStep, k.PreviousStep},
-		{k.NextSuggestion, k.PreviousSuggestion, k.Accept, k.Dismiss, k.Queue, k.Submit},
+		{k.NextFile, k.PreviousFile, k.NextSuggestion, k.PreviousSuggestion, k.Accept, k.Dismiss},
 		{k.ToggleFiles, k.ToggleAsk, k.Search, k.MoreHelp, k.Quit},
 	}
 }

@@ -11,6 +11,8 @@ const (
 	keyMoveUp             = "k"
 	keyNextSuggestion     = "J"
 	keyPreviousSuggestion = "K"
+	keyNextFile           = "]"
+	keyPreviousFile       = "["
 	keySelectNext         = keyMoveDown
 	keySelectPrevious     = keyMoveUp
 	keyAcceptComment      = "a"

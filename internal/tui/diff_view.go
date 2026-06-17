@@ -28,6 +28,10 @@ func renderDiffRows(step review.ReviewStep, selectedSuggestion int, width int) s
 	markers := diffMarkers(step.Suggestions, selectedSuggestion)
 	for _, line := range step.DiffLines {
 		rows = append(rows, renderWorkbenchDiffLine(line, markers, width))
+		marker := markerForLine(line, markers)
+		if marker.Body != "" {
+			rows = append(rows, renderAnnotationRows(marker, width)...)
+		}
 	}
 	if len(step.DiffLines) == 0 {
 		rows = append(rows, mutedLine("no diff lines mapped for this step", width))
@@ -84,28 +88,49 @@ func renderWorkbenchDiffLine(line review.DiffLine, markers map[string]diffMarker
 		label = " "
 	}
 	row := fmt.Sprintf("%-6s %5s %5s  %s%s", label, lineNumber(line.OldLine), lineNumber(line.NewLine), prefix, line.Text)
-	if marker.Body != "" {
-		row += renderInlineMarker(marker)
-	}
 	if marker.IsSelected {
 		style = style.Bold(true).Background(lipgloss.Color("236"))
 	}
 	return style.Render(truncateCells(row, width))
 }
 
-func renderInlineMarker(marker diffMarker) string {
-	var parts []string
-	if marker.Priority != "" {
-		parts = append(parts, string(marker.Priority))
+func renderAnnotationRows(marker diffMarker, width int) []string {
+	if width < 1 {
+		width = 1
 	}
-	if marker.Category != "" {
-		parts = append(parts, string(marker.Category))
-	}
+	label := "suggested comment"
 	if marker.Status != "" {
-		parts = append(parts, string(marker.Status))
+		label = fmt.Sprintf("%s comment", marker.Status)
 	}
-	parts = append(parts, marker.Body)
-	return "  | " + strings.Join(parts, " ")
+	meta := strings.TrimSpace(strings.Join(nonEmptyStrings(
+		strings.ToUpper(string(marker.Priority)),
+		string(marker.Category),
+		label,
+	), " · "))
+	header := fmt.Sprintf("       %s", meta)
+	bodyWidth := maxInt(1, width-9)
+	body := wordWrap(marker.Body, bodyWidth)
+	actions := "a approve  d dismiss  e edit  r reword"
+	if marker.Status == review.StatusApproved {
+		actions = "approved  d dismiss  e edit"
+	}
+	if marker.Status == review.StatusDismissed {
+		actions = "dismissed  a approve"
+	}
+
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	if marker.IsSelected {
+		style = style.Background(lipgloss.Color("236"))
+	}
+
+	rows := []string{
+		style.Render(truncateCells(header, width)),
+	}
+	for _, line := range splitBlock(body) {
+		rows = append(rows, style.Render(truncateCells("       "+line, width)))
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(truncateCells("       "+actions, width)))
+	return rows
 }
 
 func markerForLine(line review.DiffLine, markers map[string]diffMarker) diffMarker {
@@ -134,4 +159,14 @@ func mutedLine(text string, width int) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("244")).
 		Render(truncateCells(text, width))
+}
+
+func nonEmptyStrings(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
