@@ -7,6 +7,7 @@ const (
 	keyToggleFiles        = "f"
 	keyToggleAskPane      = "t"
 	keyStartReview        = "R"
+	keyFocusNext          = "tab"
 	keyMoveDown           = "j"
 	keyMoveUp             = "k"
 	keyNextSuggestion     = "J"

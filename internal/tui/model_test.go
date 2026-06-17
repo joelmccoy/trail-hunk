@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -247,7 +248,7 @@ func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
 	model.Height = 32
 
 	view := model.View()
-	for _, want := range []string{"Review rename", "Diff", "old", "new", "note", ">>", "func newName() {}", "func helper() {}", "suggested comment", "Confirm callers"} {
+	for _, want := range []string{"rename", "DIFF", "◆", "func newName() {}", "func helper() {}", "AI suggestion", "Confirm callers"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
 		}
@@ -265,7 +266,7 @@ func TestRenderDiffRowsShowsTargetAndStatusMarkers(t *testing.T) {
 
 	rendered := renderDiffRows(step, 1, 100)
 
-	for _, want := range []string{"old", "new", ">>", "note", "func helper() {}", "Check helper visibility."} {
+	for _, want := range []string{"◆", "func helper() {}"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered diff missing %q:\n%s", want, rendered)
 		}
@@ -301,7 +302,7 @@ func TestSuggestionNavigationHighlightsTargetLine(t *testing.T) {
 	if model.SelectedSuggestion != 1 {
 		t.Fatalf("SelectedSuggestion = %d, want 1", model.SelectedSuggestion)
 	}
-	if !strings.Contains(view, ">>") {
+	if !strings.Contains(view, "◆") {
 		t.Fatalf("selected suggestion target was not highlighted:\n%s", view)
 	}
 	if !strings.Contains(view, "Check helper visibility.") {
@@ -382,7 +383,7 @@ func TestWorkbenchShowsChangedFileRailByDefault(t *testing.T) {
 
 	view := model.View()
 
-	for _, want := range []string{"Changed Files", "review_target.go", "orchestration.go", "Access guard", "Map diff lines"} {
+	for _, want := range []string{"WALKTHROUGH", "FILES", "review_target.go", "orchestration.go", "Billing access guard", "Map diff lines"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("workbench missing %q:\n%s", want, view)
 		}
@@ -390,8 +391,13 @@ func TestWorkbenchShowsChangedFileRailByDefault(t *testing.T) {
 	if !strings.Contains(view, "▶ review_target.go") {
 		t.Fatalf("current file is not highlighted:\n%s", view)
 	}
-	if !strings.Contains(view, "▶ Access guard") {
+	if !strings.Contains(view, "▶ 01 Billing access guard") {
 		t.Fatalf("current step is not highlighted:\n%s", view)
+	}
+	for _, bad := range []string{"Change Stack", "layer 1", "findings"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("walkthrough rail should not be organized around %q:\n%s", bad, view)
+		}
 	}
 }
 
@@ -404,28 +410,110 @@ func TestWorkbenchRendersFindingsAsInlineAnnotations(t *testing.T) {
 	if strings.Contains(codeLine, "Confirm callers were updated.") {
 		t.Fatalf("code row contains finding prose: %q\n%s", codeLine, rendered)
 	}
-	if !strings.Contains(rendered, "suggested comment") {
-		t.Fatalf("inline annotation label missing:\n%s", rendered)
+}
+
+func TestWorkbenchDiffFocusesAroundSuggestionTargets(t *testing.T) {
+	model := walkthroughModelWithLongDiff()
+	model.Session.Plan.ReviewOrder[0].Suggestions = []review.ReviewComment{
+		{
+			ID:       "c1",
+			FilePath: "dev/fixtures/dummy-pr/review_target.go",
+			Side:     "RIGHT",
+			Line:     28,
+			Body:     "Review the target line.",
+			Priority: review.PriorityHigh,
+			Category: review.CategoryBug,
+			Status:   review.StatusSuggested,
+		},
 	}
-	if !strings.Contains(rendered, "a approve") || !strings.Contains(rendered, "d dismiss") {
-		t.Fatalf("annotation actions missing:\n%s", rendered)
+	step := model.Session.Plan.ReviewOrder[0]
+
+	rendered := renderDiffRows(step, 0, 100)
+
+	if !strings.Contains(rendered, "28") {
+		t.Fatalf("focused diff did not include target line 28:\n%s", rendered)
+	}
+	if strings.Contains(rendered, " 1  +line body") {
+		t.Fatalf("focused diff should elide unrelated top context:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "unchanged context") {
+		t.Fatalf("focused diff should show omitted context marker:\n%s", rendered)
 	}
 }
 
-func TestWorkbenchRightPaneExplainsCurrentChunk(t *testing.T) {
+func TestWorkbenchFindingAnnotationsStayCompact(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Session.Plan.ReviewOrder[0].Suggestions[0].Body = "This branch fails open for a blank requested account ID. Consider returning false here, or validating the request before calling this helper, so malformed input cannot grant billing access."
+	step := model.Session.Plan.ReviewOrder[0]
+
+	rendered := renderDiffRows(step, 0, 84)
+	annotationLines := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "HIGH") || strings.Contains(line, "approve") || strings.Contains(line, "fails open") || strings.Contains(line, "malformed input") {
+			annotationLines++
+		}
+	}
+
+	if annotationLines > 3 {
+		t.Fatalf("selected finding should render as a compact component, got %d annotation lines:\n%s", annotationLines, rendered)
+	}
+	if strings.Contains(rendered, "malformed input cannot grant billing access") {
+		t.Fatalf("diff pane should not render the full finding body inline:\n%s", rendered)
+	}
+}
+
+func TestSelectedSuggestionRendersInReviewDrawerNotDiffBody(t *testing.T) {
+	model := walkthroughModelWithDummyFixtureDiff()
+	model.Width = 200
+	model.Height = 36
+
+	view := model.View()
+
+	if !strings.Contains(view, "AI suggestion") {
+		t.Fatalf("review drawer missing selected suggestion title:\n%s", view)
+	}
+	if !strings.Contains(view, "returning false here") {
+		t.Fatalf("review drawer missing selected suggestion body:\n%s", view)
+	}
+	diffLine := lineContaining(view, "◆    14")
+	if strings.Contains(diffLine, "returning false here") {
+		t.Fatalf("diff annotation should stay compact; full body belongs in drawer: %q", diffLine)
+	}
+}
+
+func TestWorkbenchUsesProductChromeNotRawTextColumns(t *testing.T) {
+	model := walkthroughModelWithDummyFixtureDiff()
+	model.Width = 200
+	model.Height = 36
+
+	view := model.View()
+
+	for _, want := range []string{"WALKTHROUGH", "FILES", "WHY", "DIFF", "AI suggestion"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("workbench missing product chrome %q:\n%s", want, view)
+		}
+	}
+	for _, bad := range []string{"review   old   new  change", "Step context"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("workbench still exposes raw report label %q:\n%s", bad, view)
+		}
+	}
+}
+
+func TestWorkbenchAssistantInsightExplainsCurrentChunk(t *testing.T) {
 	model := walkthroughModelWithDiff()
 	model.Width = 160
 	model.Height = 34
 
 	view := model.View()
 
-	for _, want := range []string{"What this chunk does", "Why it matters", "Used by / impact", "How to review", "Confidence"} {
+	for _, want := range []string{"Billing access guard", "WHY", "Callers may need updates."} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("right pane missing %q:\n%s", want, view)
+			t.Fatalf("assistant insight missing %q:\n%s", want, view)
 		}
 	}
 	if strings.Contains(view, "selected comment") {
-		t.Fatalf("right pane should not be a finding detail panel:\n%s", view)
+		t.Fatalf("assistant insight should not be a finding detail panel:\n%s", view)
 	}
 }
 
@@ -456,10 +544,27 @@ func TestWorkbenchShowsChangeStackMetadata(t *testing.T) {
 
 	view := model.View()
 
-	for _, want := range []string{"Change Stack", "Fixture account helpers", "layer 1", "Billing access guard"} {
+	for _, want := range []string{"WALKTHROUGH", "Fixture account helpers", "01 Billing access guard"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("workbench missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestWorkbenchRailDoesNotDuplicateLayerAndStepRows(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+	model.Session.Plan.ReviewOrder[0].Title = "Review billing access guard"
+	model.Session.Plan.ReviewOrder[0].LayerTitle = "Billing access guard"
+
+	view := model.View()
+
+	if strings.Contains(view, "Review billing access guard") {
+		t.Fatalf("rail should not duplicate layer and step titles:\n%s", view)
+	}
+	if !strings.Contains(view, "▶ 01 Billing access guard") {
+		t.Fatalf("rail should keep the current layer row:\n%s", view)
 	}
 }
 
@@ -472,10 +577,10 @@ func TestFocusModeHidesSidePanes(t *testing.T) {
 	model = updated.(Model)
 
 	view := model.View()
-	if strings.Contains(view, "Change Stack") || strings.Contains(view, "What this chunk does") {
+	if strings.Contains(view, "WALKTHROUGH") || strings.Contains(view, "ASSISTANT") {
 		t.Fatalf("focus mode should hide side panes:\n%s", view)
 	}
-	if !strings.Contains(view, "Diff") || !strings.Contains(view, "func newName()") {
+	if !strings.Contains(view, "DIFF") || !strings.Contains(view, "func newName()") {
 		t.Fatalf("focus mode should keep diff visible:\n%s", view)
 	}
 }
@@ -491,6 +596,25 @@ func TestViewedToggleMarksCurrentFileInRail(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "✓ review_target.go") {
 		t.Fatalf("viewed file marker missing:\n%s", view)
+	}
+}
+
+func TestTabCyclesWorkbenchFocusPanes(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+	model.Screen = ScreenWalkthrough
+
+	updated, _ := model.Update(key("tab"))
+	model = updated.(Model)
+	if model.Workbench.Focus != FocusRail {
+		t.Fatalf("focus after first tab = %q, want %q", model.Workbench.Focus, FocusRail)
+	}
+
+	updated, _ = model.Update(key("tab"))
+	model = updated.(Model)
+	if model.Workbench.Focus != FocusDiff {
+		t.Fatalf("focus after second tab = %q, want %q", model.Workbench.Focus, FocusDiff)
 	}
 }
 
@@ -659,6 +783,123 @@ func TestFooterUsesGeneratedKeyHelp(t *testing.T) {
 	}
 }
 
+func TestWalkthroughFooterIsCompactAndNotClipped(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+
+	if strings.Contains(footer, "...") {
+		t.Fatalf("walkthrough footer should not clip at normal width: %q", footer)
+	}
+	for _, want := range []string{"n/p step", "]/[ file", "a approve", "z focus", "q quit"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("walkthrough footer missing %q: %q", want, footer)
+		}
+	}
+}
+
+func TestWorkbenchWideRenderAvoidsKnownRoughEdges(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 200
+	model.Height = 36
+	model.Session.Plan.ReviewOrder[0].Suggestions[0].Body = "This branch fails open for a blank requested account ID. Consider returning false here, or validating the request before calling this helper, so malformed input cannot grant billing access."
+
+	view := model.View()
+	logViewSnapshot(t, view)
+
+	for _, bad := range []string{
+		"cohorts · layers · files",
+		"Change Stack",
+		"findings",
+		"layer 1",
+		"Review billing access guard",
+	} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("wide workbench contains rough edge %q:\n%s", bad, view)
+		}
+	}
+	for _, want := range []string{
+		"WALKTHROUGH",
+		"Billing access guard",
+		"DIFF dev/fixtures/dummy-pr/review_target.go",
+		"a approve",
+		"n/p step",
+		"]/[ file",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wide workbench missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestWorkbenchDummyFixtureRenderFocusesOnActiveChunk(t *testing.T) {
+	model := walkthroughModelWithDummyFixtureDiff()
+	model.Width = 200
+	model.Height = 36
+
+	view := model.View()
+	logViewSnapshot(t, view)
+
+	if strings.Contains(view, "+package dummypr") {
+		t.Fatalf("dummy fixture render should not start at unrelated file preamble:\n%s", view)
+	}
+	for _, want := range []string{
+		"unchanged context",
+		"return true",
+		"AI suggestion",
+		"HIGH",
+		"security",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("dummy fixture render missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestWorkbenchComplexFixtureJourneySnapshots(t *testing.T) {
+	model := walkthroughModelWithComplexFixture()
+	model.Width = 200
+	model.Height = 36
+
+	cases := []struct {
+		stepIndex int
+		title     string
+		file      string
+		code      string
+	}{
+		{stepIndex: 0, title: "Billing access guard", file: "review_target.go", code: "return true"},
+		{stepIndex: 1, title: "Display-name normalization", file: "review_target.go", code: "return trimmed[:24]"},
+		{stepIndex: 2, title: "Permission check callsite", file: "billing_handler.go", code: "CanAccessBilling"},
+		{stepIndex: 3, title: "Unicode display-name test", file: "review_target_test.go", code: "NormalizeDisplayName"},
+	}
+
+	for _, tc := range cases {
+		model.Session.Cursor.StepIndex = tc.stepIndex
+		model.SelectedSuggestion = 0
+		view := model.View()
+		logViewSnapshot(t, view)
+		for _, want := range []string{tc.title, tc.file, tc.code, "WALKTHROUGH", "FILES"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("step %d render missing %q:\n%s", tc.stepIndex+1, want, view)
+			}
+		}
+		for _, bad := range []string{"old    new", "mark", "cohorts", "findings"} {
+			if strings.Contains(view, bad) {
+				t.Fatalf("step %d render contains rough edge %q:\n%s", tc.stepIndex+1, bad, view)
+			}
+		}
+		for i, line := range strings.Split(view, "\n") {
+			if width := lipgloss.Width(line); width != model.Width {
+				t.Fatalf("step %d line %d width = %d, want %d: %q", tc.stepIndex+1, i, width, model.Width, line)
+			}
+		}
+	}
+}
+
 func TestCommentsScreenLinesFitTerminalWidth(t *testing.T) {
 	model := NewModel(review.ReviewSession{})
 	model.Width = 80
@@ -790,6 +1031,149 @@ func walkthroughModelWithLongDiff() Model {
 	return model
 }
 
+func walkthroughModelWithDummyFixtureDiff() Model {
+	model := walkthroughModelWithDiff()
+	text := []string{
+		"package dummypr",
+		"",
+		"import \"strings\"",
+		"",
+		"type Account struct {",
+		"ID       string",
+		"Role     string",
+		"IsActive bool",
+		"}",
+		"",
+		"// CanAccessBilling is intentionally imperfect fixture code for trail-hunk reviews.",
+		"func CanAccessBilling(account Account, requestedAccountID string) bool {",
+		"if strings.TrimSpace(requestedAccountID) == \"\" {",
+		"return true",
+		"}",
+		"",
+		"if account.Role == \"admin\" {",
+		"return true",
+		"}",
+		"",
+		"return account.IsActive && account.ID == requestedAccountID",
+		"}",
+		"",
+		"func NormalizeDisplayName(name string) string {",
+		"trimmed := strings.TrimSpace(name)",
+		"if len(trimmed) > 24 {",
+		"return trimmed[:24]",
+		"}",
+		"return trimmed",
+		"}",
+	}
+	var lines []review.DiffLine
+	for i, line := range text {
+		lines = append(lines, review.DiffLine{
+			Kind:    review.DiffLineAdded,
+			NewLine: intPtr(i + 1),
+			Text:    line,
+		})
+	}
+	model.Session.Plan.ReviewOrder[0].Title = "Review billing access guard"
+	model.Session.Plan.ReviewOrder[0].Summary = "The helper grants access when the requested account ID is blank."
+	model.Session.Plan.ReviewOrder[0].Why = "Empty or malformed resource identifiers should fail closed so callers cannot accidentally bypass authorization."
+	model.Session.Plan.ReviewOrder[0].Focus = []string{
+		"Check whether blank requestedAccountID should ever be valid.",
+		"Confirm admin bypass behavior is intentional and audited.",
+	}
+	model.Session.Plan.ReviewOrder[0].DiffLines = lines
+	model.Session.Plan.ReviewOrder[0].Suggestions = []review.ReviewComment{
+		{ID: "c1", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 14, Body: "This branch fails open for a blank requested account ID. Consider returning false here, or validating the request before calling this helper, so malformed input cannot grant billing access.", Priority: review.PriorityHigh, Category: review.CategorySecurity, Status: review.StatusSuggested},
+		{ID: "c2", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: 18, Body: "The admin bypass may be intended, but it would be safer to make that policy explicit in the function name, documentation, or a caller-side authorization check.", Priority: review.PriorityMedium, Category: review.CategoryQuestion, Status: review.StatusSuggested},
+	}
+	return model
+}
+
+func walkthroughModelWithComplexFixture() Model {
+	model := walkthroughModelWithDummyFixtureDiff()
+	line14 := 14
+	line18 := 18
+	line27 := 27
+	line42 := 42
+	line12 := 12
+	model.Session.Plan.ReviewOrder = []review.ReviewStep{
+		model.Session.Plan.ReviewOrder[0],
+		{
+			ID:         "fixture-display-name",
+			FilePath:   "dev/fixtures/dummy-pr/review_target.go",
+			Title:      "Review display-name normalization",
+			GroupID:    "fixture-account-helpers",
+			GroupTitle: "Fixture account helpers",
+			LayerIndex: 2,
+			LayerTitle: "Display-name normalization",
+			Summary:    "The display-name helper trims whitespace and truncates long names.",
+			Why:        "User-visible strings often contain multi-byte characters, so byte slicing can produce invalid UTF-8.",
+			Focus:      []string{"Check byte/rune handling.", "Look for Unicode tests."},
+			DiffLines: []review.DiffLine{
+				{Kind: review.DiffLineAdded, NewLine: intPtr(24), Text: "func NormalizeDisplayName(name string) string {"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(25), Text: "trimmed := strings.TrimSpace(name)"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(26), Text: "if len(trimmed) > 24 {"},
+				{Kind: review.DiffLineAdded, NewLine: &line27, Text: "return trimmed[:24]"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(28), Text: "}"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(29), Text: "return trimmed"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(30), Text: "}"},
+			},
+			Suggestions: []review.ReviewComment{
+				{ID: "c3", FilePath: "dev/fixtures/dummy-pr/review_target.go", Side: "RIGHT", Line: line27, Body: "This truncates by byte index and can split multi-byte characters.", Priority: review.PriorityMedium, Category: review.CategoryCorrectness, Status: review.StatusSuggested},
+			},
+		},
+		{
+			ID:         "fixture-handler-callsite",
+			FilePath:   "internal/billing/billing_handler.go",
+			Title:      "Review permission check callsite",
+			GroupID:    "billing-flow",
+			GroupTitle: "Billing request flow",
+			LayerIndex: 3,
+			LayerTitle: "Permission check callsite",
+			Summary:    "The handler delegates billing access to the new helper.",
+			Why:        "The helper now sits on the request path and controls access for downstream billing operations.",
+			Focus:      []string{"Verify empty account IDs cannot reach the helper.", "Check caller-side auditing."},
+			DiffLines: []review.DiffLine{
+				{Kind: review.DiffLineContext, OldLine: intPtr(39), NewLine: intPtr(39), Text: "func HandleBillingRequest(account Account, request Request) error {"},
+				{Kind: review.DiffLineAdded, NewLine: &line42, Text: "if !CanAccessBilling(account, request.AccountID) {"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(43), Text: "return ErrForbidden"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(44), Text: "}"},
+				{Kind: review.DiffLineContext, OldLine: intPtr(45), NewLine: intPtr(45), Text: "return createBillingSession(request)"},
+			},
+			Suggestions: []review.ReviewComment{
+				{ID: "c4", FilePath: "internal/billing/billing_handler.go", Side: "RIGHT", Line: line42, Body: "Validate request.AccountID before calling the helper so malformed IDs fail closed at the boundary.", Priority: review.PriorityHigh, Category: review.CategorySecurity, Status: review.StatusSuggested},
+			},
+		},
+		{
+			ID:         "fixture-display-test",
+			FilePath:   "internal/billing/review_target_test.go",
+			Title:      "Review Unicode display-name test",
+			GroupID:    "billing-flow",
+			GroupTitle: "Billing request flow",
+			LayerIndex: 4,
+			LayerTitle: "Unicode display-name test",
+			Summary:    "A regression test documents display-name behavior.",
+			Why:        "Tests should describe whether truncation is byte-based, rune-based, or display-width-based.",
+			Focus:      []string{"Confirm the expected string is valid UTF-8.", "Add a boundary case for exactly 24 display cells."},
+			DiffLines: []review.DiffLine{
+				{Kind: review.DiffLineAdded, NewLine: intPtr(10), Text: "func TestNormalizeDisplayNameUnicode(t *testing.T) {"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(11), Text: "got := NormalizeDisplayName(\"José 🚀 customer account\")"},
+				{Kind: review.DiffLineAdded, NewLine: &line12, Text: "if got == \"\" { t.Fatal(\"expected display name\") }"},
+				{Kind: review.DiffLineAdded, NewLine: intPtr(13), Text: "}"},
+			},
+			Suggestions: []review.ReviewComment{
+				{ID: "c5", FilePath: "internal/billing/review_target_test.go", Side: "RIGHT", Line: line12, Body: "This assertion does not prove truncation preserves Unicode boundaries; assert the exact expected value.", Priority: review.PriorityMedium, Category: review.CategoryCorrectness, Status: review.StatusSuggested},
+			},
+		},
+	}
+	model.Session.Plan.ReviewOrder[0].Suggestions[0].Line = line14
+	model.Session.Plan.ReviewOrder[0].Suggestions[1].Line = line18
+	model.Session.Comments = nil
+	for _, step := range model.Session.Plan.ReviewOrder {
+		model.Session.Comments = append(model.Session.Comments, step.Suggestions...)
+	}
+	return model
+}
+
 func lineContaining(text string, needle string) string {
 	for _, line := range strings.Split(text, "\n") {
 		if strings.Contains(line, needle) {
@@ -797,6 +1181,14 @@ func lineContaining(text string, needle string) string {
 		}
 	}
 	return ""
+}
+
+func logViewSnapshot(t *testing.T, view string) {
+	t.Helper()
+	if os.Getenv("TRAIL_HUNK_TEST_RENDER") == "" {
+		return
+	}
+	t.Logf("\n%s", view)
 }
 
 func contains(s string, substr string) bool {

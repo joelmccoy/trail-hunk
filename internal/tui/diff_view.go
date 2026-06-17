@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -9,7 +9,6 @@ import (
 )
 
 type diffMarker struct {
-	Label      string
 	Body       string
 	Priority   review.Priority
 	Category   review.CommentCategory
@@ -22,16 +21,16 @@ func renderDiffRows(step review.ReviewStep, selectedSuggestion int, width int) s
 		width = 1
 	}
 
-	rows := []string{
-		diffHeaderRow(width),
-	}
+	var rows []string
 	markers := diffMarkers(step.Suggestions, selectedSuggestion)
-	for _, line := range step.DiffLines {
-		rows = append(rows, renderWorkbenchDiffLine(line, markers, width))
-		marker := markerForLine(line, markers)
-		if marker.Body != "" {
-			rows = append(rows, renderAnnotationRows(marker, width)...)
+	targets := suggestionTargets(step.Suggestions, selectedSuggestion)
+	lines := focusedDiffLines(step.DiffLines, targets, 3)
+	for _, line := range lines {
+		if line.Text == omittedDiffText {
+			rows = append(rows, omittedDiffRow(width))
+			continue
 		}
+		rows = append(rows, renderWorkbenchDiffLine(line, markers, width))
 	}
 	if len(step.DiffLines) == 0 {
 		rows = append(rows, mutedLine("no diff lines mapped for this step", width))
@@ -50,23 +49,19 @@ func diffMarkers(suggestions []review.ReviewComment, selected int) map[string]di
 			side = "RIGHT"
 		}
 		marker := diffMarker{
-			Label:      "note",
 			Body:       suggestion.Body,
 			Priority:   suggestion.Priority,
 			Category:   suggestion.Category,
 			Status:     suggestion.Status,
 			IsSelected: i == selected,
 		}
-		if marker.IsSelected {
-			marker.Label = ">>"
-		}
 		markers[diffTargetKey(side, suggestion.Line)] = marker
 	}
 	return markers
 }
 
-func diffHeaderRow(width int) string {
-	return mutedLine(fmt.Sprintf("%-6s %5s %5s  %s", "mark", "old", "new", "code"), width)
+func omittedDiffRow(width int) string {
+	return mutedLine("     ⋯ unchanged context", width)
 }
 
 func renderWorkbenchDiffLine(line review.DiffLine, markers map[string]diffMarker, width int) string {
@@ -83,54 +78,41 @@ func renderWorkbenchDiffLine(line review.DiffLine, markers map[string]diffMarker
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 	}
 
-	label := marker.Label
-	if label == "" {
-		label = " "
-	}
-	row := fmt.Sprintf("%-6s %5s %5s  %s%s", label, lineNumber(line.OldLine), lineNumber(line.NewLine), prefix, line.Text)
+	gutterWidth := 8
+	codeWidth := maxInt(1, width-gutterWidth)
+	row := lipgloss.JoinHorizontal(lipgloss.Top,
+		diffGutter(line, marker),
+		style.MaxWidth(codeWidth).Render(truncateCells(prefix+" "+line.Text, codeWidth)),
+	)
 	if marker.IsSelected {
-		style = style.Bold(true).Background(lipgloss.Color("236"))
+		row = lipgloss.NewStyle().Width(width).Background(lipgloss.Color("235")).Render(truncateCells(row, width))
 	}
-	return style.Render(truncateCells(row, width))
+	return truncateCells(row, width)
 }
 
-func renderAnnotationRows(marker diffMarker, width int) []string {
-	if width < 1 {
-		width = 1
+func diffGutter(line review.DiffLine, marker diffMarker) string {
+	markerText := "  "
+	if marker.Body != "" {
+		markerText = "◆"
 	}
-	label := "suggested comment"
-	if marker.Status != "" {
-		label = fmt.Sprintf("%s comment", marker.Status)
+	markerStyle := lipgloss.NewStyle().Width(2).Foreground(lipgloss.Color("244"))
+	if marker.Body != "" {
+		markerStyle = markerStyle.Foreground(lipgloss.Color("78")).Bold(marker.IsSelected)
 	}
-	meta := strings.TrimSpace(strings.Join(nonEmptyStrings(
-		strings.ToUpper(string(marker.Priority)),
-		string(marker.Category),
-		label,
-	), " · "))
-	header := fmt.Sprintf("       %s", meta)
-	bodyWidth := maxInt(1, width-9)
-	body := wordWrap(marker.Body, bodyWidth)
-	actions := "a approve  d dismiss  e edit  r reword"
-	if marker.Status == review.StatusApproved {
-		actions = "approved  d dismiss  e edit"
-	}
-	if marker.Status == review.StatusDismissed {
-		actions = "dismissed  a approve"
-	}
+	lineStyle := lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Foreground(lipgloss.Color("244"))
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		markerStyle.Render(markerText),
+		lineStyle.Render(displayLineNumber(line)),
+		lipgloss.NewStyle().Width(1).Render(" "),
+	)
+}
 
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	if marker.IsSelected {
-		style = style.Background(lipgloss.Color("236"))
+func compactFindingBody(body string, width int) string {
+	body = strings.Join(strings.Fields(body), " ")
+	if body == "" {
+		return "Review this line before approving the chunk."
 	}
-
-	rows := []string{
-		style.Render(truncateCells(header, width)),
-	}
-	for _, line := range splitBlock(body) {
-		rows = append(rows, style.Render(truncateCells("       "+line, width)))
-	}
-	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(truncateCells("       "+actions, width)))
-	return rows
+	return truncateCells(body, width)
 }
 
 func markerForLine(line review.DiffLine, markers map[string]diffMarker) diffMarker {
@@ -152,7 +134,17 @@ func lineNumber(value *int) string {
 	if value == nil {
 		return ""
 	}
-	return fmt.Sprintf("%d", *value)
+	return strconv.Itoa(*value)
+}
+
+func displayLineNumber(line review.DiffLine) string {
+	if line.Kind == review.DiffLineDeleted && line.OldLine != nil {
+		return lineNumber(line.OldLine)
+	}
+	if line.NewLine != nil {
+		return lineNumber(line.NewLine)
+	}
+	return lineNumber(line.OldLine)
 }
 
 func mutedLine(text string, width int) string {

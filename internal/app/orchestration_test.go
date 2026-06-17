@@ -158,18 +158,26 @@ func TestRunReviewMapsFixtureProviderCommentsToDummyPRDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(session.Plan.ReviewOrder) != 2 {
-		t.Fatalf("len(ReviewOrder) = %d, want 2", len(session.Plan.ReviewOrder))
+	if len(session.Plan.ReviewOrder) != 4 {
+		t.Fatalf("len(ReviewOrder) = %d, want 4", len(session.Plan.ReviewOrder))
 	}
-	if len(session.Comments) != 3 {
-		t.Fatalf("len(Comments) = %d, want 3", len(session.Comments))
+	if len(session.Comments) != 5 {
+		t.Fatalf("len(Comments) = %d, want 5", len(session.Comments))
 	}
+	seenFiles := map[string]bool{}
 	for _, comment := range session.Comments {
-		if comment.FilePath != "dev/fixtures/dummy-pr/review_target.go" {
-			t.Fatalf("comment file = %q", comment.FilePath)
-		}
+		seenFiles[comment.FilePath] = true
 		if comment.Line == 0 {
 			t.Fatalf("comment line was not mapped: %+v", comment)
+		}
+	}
+	for _, file := range []string{
+		"dev/fixtures/dummy-pr/review_target.go",
+		"dev/fixtures/dummy-pr/billing_handler.go",
+		"dev/fixtures/dummy-pr/review_target_test.go",
+	} {
+		if !seenFiles[file] {
+			t.Fatalf("mapped comments missing file %q: %+v", file, session.Comments)
 		}
 	}
 }
@@ -210,6 +218,48 @@ index 0000000..1111111
 +		return trimmed[:24]
 +	}
 +	return trimmed
++}
+diff --git a/dev/fixtures/dummy-pr/billing_handler.go b/dev/fixtures/dummy-pr/billing_handler.go
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/dev/fixtures/dummy-pr/billing_handler.go
+@@ -0,0 +1,19 @@
++package dummypr
++
++import "errors"
++
++var ErrForbidden = errors.New("forbidden")
++
++type BillingRequest struct {
++	AccountID   string
++	AmountCents int
++}
++
++func HandleBillingRequest(account Account, request BillingRequest) error {
++	if request.AmountCents <= 0 {
++		return errors.New("amount must be positive")
++	}
++	if !CanAccessBilling(account, request.AccountID) {
++		return ErrForbidden
++	}
++	return nil
++}
+diff --git a/dev/fixtures/dummy-pr/review_target_test.go b/dev/fixtures/dummy-pr/review_target_test.go
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/dev/fixtures/dummy-pr/review_target_test.go
+@@ -0,0 +1,10 @@
++package dummypr
++
++import "testing"
++
++func TestNormalizeDisplayNameUnicode(t *testing.T) {
++	got := NormalizeDisplayName("José 🚀 customer account")
++	if got == "" {
++		t.Fatal("expected display name")
++	}
 +}
 `
 }

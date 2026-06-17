@@ -49,6 +49,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 worktree="$repo_root/.dev/worktrees/$worktree_name"
 fixture_dir="$worktree/dev/fixtures/dummy-pr"
 fixture_file="$fixture_dir/review_target.go"
+fixture_handler_file="$fixture_dir/billing_handler.go"
+fixture_test_file="$fixture_dir/review_target_test.go"
 remote_url="$(git -C "$repo_root" config --get remote.origin.url || true)"
 source_head="$(git -C "$repo_root" rev-parse --short HEAD)"
 source_ref="$(git -C "$repo_root" rev-parse HEAD)"
@@ -199,6 +201,42 @@ func NormalizeDisplayName(name string) string {
 		return trimmed[:24]
 	}
 	return trimmed
+}
+GO
+
+  cat >"$fixture_handler_file" <<'GO'
+package dummypr
+
+import "errors"
+
+var ErrForbidden = errors.New("forbidden")
+
+type BillingRequest struct {
+	AccountID   string
+	AmountCents int
+}
+
+func HandleBillingRequest(account Account, request BillingRequest) error {
+	if request.AmountCents <= 0 {
+		return errors.New("amount must be positive")
+	}
+	if !CanAccessBilling(account, request.AccountID) {
+		return ErrForbidden
+	}
+	return nil
+}
+GO
+
+  cat >"$fixture_test_file" <<'GO'
+package dummypr
+
+import "testing"
+
+func TestNormalizeDisplayNameUnicode(t *testing.T) {
+	got := NormalizeDisplayName("José 🚀 customer account")
+	if got == "" {
+		t.Fatal("expected display name")
+	}
 }
 GO
 }
