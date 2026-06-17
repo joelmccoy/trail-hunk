@@ -27,8 +27,8 @@ func TestFixtureProviderReturnsDeterministicReview(t *testing.T) {
 	if response.Overview == "" {
 		t.Fatal("expected overview")
 	}
-	if len(response.ReviewOrder) != 2 {
-		t.Fatalf("len(ReviewOrder) = %d, want 2", len(response.ReviewOrder))
+	if len(response.ReviewOrder) != 4 {
+		t.Fatalf("len(ReviewOrder) = %d, want 4", len(response.ReviewOrder))
 	}
 	if len(response.ReviewOrder[0].Suggestions) == 0 {
 		t.Fatal("expected suggestions on first step")

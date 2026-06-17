@@ -5,7 +5,11 @@ import (
 	"fmt"
 )
 
-const fixtureReviewFile = "dev/fixtures/dummy-pr/review_target.go"
+const (
+	fixtureReviewFile  = "dev/fixtures/dummy-pr/review_target.go"
+	fixtureHandlerFile = "dev/fixtures/dummy-pr/billing_handler.go"
+	fixtureTestFile    = "dev/fixtures/dummy-pr/review_target_test.go"
+)
 
 type FixtureProvider struct{}
 
@@ -92,6 +96,58 @@ func (FixtureProvider) Review(context.Context, ReviewRequest) (ReviewResponse, e
 						Side:     "RIGHT",
 						Line:     27,
 						Body:     "This truncates by byte index, which can split multi-byte characters. Convert to runes or use a display-width-aware helper before slicing user-visible names.",
+						Priority: "medium",
+						Category: "correctness",
+					},
+				},
+			},
+			{
+				ID:         "fixture-handler-callsite",
+				FilePath:   fixtureHandlerFile,
+				HunkID:     fixtureHandlerFile + ":1",
+				Title:      "Review permission check callsite",
+				GroupID:    "fixture-billing-flow",
+				GroupTitle: "Billing request flow",
+				LayerIndex: 3,
+				LayerTitle: "Permission check callsite",
+				Summary:    "The handler delegates billing access to the new helper.",
+				Why:        "The helper now controls a request path, so boundary validation and auditing matter.",
+				Focus: []string{
+					"Verify empty account IDs cannot reach the helper.",
+					"Check whether denied access is logged or observable.",
+				},
+				Suggestions: []SuggestedComment{
+					{
+						FilePath: fixtureHandlerFile,
+						Side:     "RIGHT",
+						Line:     16,
+						Body:     "Validate request.AccountID before calling the helper so malformed identifiers fail closed at the boundary.",
+						Priority: "high",
+						Category: "security",
+					},
+				},
+			},
+			{
+				ID:         "fixture-display-test",
+				FilePath:   fixtureTestFile,
+				HunkID:     fixtureTestFile + ":1",
+				Title:      "Review Unicode display-name test",
+				GroupID:    "fixture-billing-flow",
+				GroupTitle: "Billing request flow",
+				LayerIndex: 4,
+				LayerTitle: "Unicode display-name test",
+				Summary:    "A regression test documents display-name behavior.",
+				Why:        "Tests should make the intended truncation semantics explicit before reviewers approve the helper.",
+				Focus: []string{
+					"Confirm the expected output remains valid UTF-8.",
+					"Add a boundary case for exactly 24 display cells.",
+				},
+				Suggestions: []SuggestedComment{
+					{
+						FilePath: fixtureTestFile,
+						Side:     "RIGHT",
+						Line:     8,
+						Body:     "This assertion only checks for a non-empty value. Assert the exact expected Unicode-safe result so the test catches byte-slicing regressions.",
 						Priority: "medium",
 						Category: "correctness",
 					},

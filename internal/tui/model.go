@@ -136,12 +136,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyPreviousFile:
 			m.selectFile(-1)
 			m.Screen = ScreenWalkthrough
+		case keyFocusNext:
+			if m.Screen == ScreenWalkthrough {
+				m.Workbench.Focus = nextWorkbenchFocus(m.Workbench.Focus, m.ShowFileTree, m.FocusMode)
+			}
 		case keyFocusMode:
 			m.FocusMode = !m.FocusMode
+			if m.FocusMode {
+				m.Workbench.Focus = FocusDiff
+			}
 		case keyToggleViewed:
 			m.toggleViewedFile()
 		case keyToggleFiles:
 			m.ShowFileTree = !m.ShowFileTree
+			if !m.ShowFileTree && m.Workbench.Focus == FocusRail {
+				m.Workbench.Focus = FocusDiff
+			}
 		case keyMoveDown, "down", keyMoveUp, "up":
 			if m.Screen == ScreenWalkthrough {
 				m.syncWorkbench()
@@ -204,6 +214,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func nextWorkbenchFocus(current FocusPane, showFiles bool, focusMode bool) FocusPane {
+	if focusMode {
+		return FocusDiff
+	}
+	order := []FocusPane{FocusDiff}
+	if showFiles {
+		order = []FocusPane{FocusRail, FocusDiff}
+	}
+	for i, pane := range order {
+		if pane == current {
+			return order[(i+1)%len(order)]
+		}
+	}
+	return FocusDiff
+}
+
 func (m *Model) syncWorkbench() {
 	if m.Screen != ScreenWalkthrough {
 		return
@@ -255,11 +281,73 @@ func renderHeaderBar(text string, width int) string {
 
 func (m Model) renderFooter(width int) string {
 	helpText := m.help.View(m.keys)
+	if m.Screen == ScreenWalkthrough {
+		helpText = walkthroughFooterText(width - 1)
+	}
 	return lipgloss.NewStyle().
 		Width(width).
 		Background(lipgloss.Color("235")).
 		Foreground(lipgloss.Color("244")).
 		Render(truncateCells(" "+helpText, width))
+}
+
+func walkthroughFooterText(width int) string {
+	commands := []string{
+		"tab focus",
+		"j/k scroll",
+		"n/p step",
+		"]/[ file",
+		"J/K finding",
+		"a approve",
+		"d dismiss",
+		"z focus",
+		"v viewed",
+		"t ask",
+		"C queue",
+		"q quit",
+	}
+	return commandBar(width, commands, []string{
+		"n/p step",
+		"]/[ file",
+		"a approve",
+		"d dismiss",
+		"z focus",
+		"q quit",
+	}, []string{
+		"n/p",
+		"]/[",
+		"a/d",
+		"z",
+		"q",
+	})
+}
+
+func commandBar(width int, primary []string, compact []string, minimal []string) string {
+	for _, commands := range [][]string{primary, compact, minimal} {
+		text := strings.Join(commands, " · ")
+		if lipgloss.Width(text) <= width {
+			return text
+		}
+	}
+	return fitCommands(width, minimal)
+}
+
+func fitCommands(width int, commands []string) string {
+	if width < 1 {
+		return ""
+	}
+	var kept []string
+	for _, command := range commands {
+		candidate := strings.Join(append(append([]string{}, kept...), command), " · ")
+		if lipgloss.Width(candidate) > width {
+			break
+		}
+		kept = append(kept, command)
+	}
+	if len(kept) == 0 {
+		return truncateCells(commands[0], width)
+	}
+	return strings.Join(kept, " · ")
 }
 
 func (m Model) renderHeader() string {

@@ -36,7 +36,7 @@ func defaultKeyMap() keyMap {
 			bubblekey.WithHelp("R", "review"),
 		),
 		FocusNext: bubblekey.NewBinding(
-			bubblekey.WithKeys("tab"),
+			bubblekey.WithKeys(keyFocusNext),
 			bubblekey.WithHelp("tab", "focus"),
 		),
 		MoveDown: bubblekey.NewBinding(
