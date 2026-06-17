@@ -32,8 +32,10 @@ type Model struct {
 	Height             int
 	ShowFileTree       bool
 	ShowAskPane        bool
+	FocusMode          bool
 	SelectedSuggestion int
 	Workbench          WorkbenchModel
+	ViewedFiles        map[string]bool
 	Loading            bool
 	Submitting         bool
 	Err                error
@@ -60,6 +62,7 @@ func NewModelWithOptions(session review.ReviewSession, opts Options) Model {
 		FocusedPane:    "diff",
 		ShowFileTree:   true,
 		Workbench:      NewWorkbenchModel(),
+		ViewedFiles:    map[string]bool{},
 		keys:           keys,
 		help:           newHelpModel(),
 		starter:        opts.ReviewStarter,
@@ -133,6 +136,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyPreviousFile:
 			m.selectFile(-1)
 			m.Screen = ScreenWalkthrough
+		case keyFocusMode:
+			m.FocusMode = !m.FocusMode
+		case keyToggleViewed:
+			m.toggleViewedFile()
 		case keyToggleFiles:
 			m.ShowFileTree = !m.ShowFileTree
 		case keyMoveDown, "down", keyMoveUp, "up":
@@ -206,7 +213,7 @@ func (m *Model) syncWorkbench() {
 		height := maxInt(1, m.Height-4)
 		m.Workbench.SetSize(width, height)
 	}
-	m.Workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree)
+	m.Workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree, m.ViewedFiles, m.FocusMode)
 }
 
 func (m Model) View() string {
@@ -375,8 +382,8 @@ func renderWalkthrough(m Model, width int, height int) string {
 	}
 	workbench := m.Workbench
 	workbench.SetSize(width, height)
-	workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree)
-	return workbench.View(m.Session, m.SelectedSuggestion, m.ShowFileTree, m.ShowAskPane)
+	workbench.Sync(m.Session, m.SelectedSuggestion, m.ShowFileTree, m.ViewedFiles, m.FocusMode)
+	return workbench.View(m.Session, m.SelectedSuggestion, m.ShowFileTree, m.ShowAskPane, m.ViewedFiles, m.FocusMode)
 }
 
 func diffPanel(step review.ReviewStep, selectedSuggestion int, width int) string {
@@ -618,6 +625,17 @@ func (m *Model) selectFile(delta int) {
 			return
 		}
 	}
+}
+
+func (m *Model) toggleViewedFile() {
+	step, ok := currentStep(m.Session)
+	if !ok || step.FilePath == "" {
+		return
+	}
+	if m.ViewedFiles == nil {
+		m.ViewedFiles = map[string]bool{}
+	}
+	m.ViewedFiles[step.FilePath] = !m.ViewedFiles[step.FilePath]
 }
 
 func (m *Model) updateSelectedSuggestion(status review.CommentStatus) {

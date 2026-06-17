@@ -365,7 +365,7 @@ func TestMoveKeysScrollFocusedDiffViewport(t *testing.T) {
 	model.Width = 100
 	model.Height = 12
 	model.Workbench.SetSize(96, 8)
-	model.Workbench.Sync(model.Session, model.SelectedSuggestion, false)
+	model.Workbench.Sync(model.Session, model.SelectedSuggestion, false, model.ViewedFiles, model.FocusMode)
 
 	updated, _ := model.Update(key("j"))
 	model = updated.(Model)
@@ -443,6 +443,54 @@ func TestFileNavigationJumpsToNextChangedFile(t *testing.T) {
 	model = updated.(Model)
 	if got := model.Session.Plan.ReviewOrder[model.Session.Cursor.StepIndex].FilePath; got != "dev/fixtures/dummy-pr/review_target.go" {
 		t.Fatalf("current file = %q, want dev/fixtures/dummy-pr/review_target.go", got)
+	}
+}
+
+func TestWorkbenchShowsChangeStackMetadata(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+	model.Session.Plan.ReviewOrder[0].GroupTitle = "Fixture account helpers"
+	model.Session.Plan.ReviewOrder[0].LayerTitle = "Billing access guard"
+	model.Session.Plan.ReviewOrder[0].LayerIndex = 1
+
+	view := model.View()
+
+	for _, want := range []string{"Change Stack", "Fixture account helpers", "layer 1", "Billing access guard"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("workbench missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestFocusModeHidesSidePanes(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+
+	updated, _ := model.Update(key("z"))
+	model = updated.(Model)
+
+	view := model.View()
+	if strings.Contains(view, "Change Stack") || strings.Contains(view, "What this chunk does") {
+		t.Fatalf("focus mode should hide side panes:\n%s", view)
+	}
+	if !strings.Contains(view, "Diff") || !strings.Contains(view, "func newName()") {
+		t.Fatalf("focus mode should keep diff visible:\n%s", view)
+	}
+}
+
+func TestViewedToggleMarksCurrentFileInRail(t *testing.T) {
+	model := walkthroughModelWithDiff()
+	model.Width = 160
+	model.Height = 34
+
+	updated, _ := model.Update(key("v"))
+	model = updated.(Model)
+
+	view := model.View()
+	if !strings.Contains(view, "✓ review_target.go") {
+		t.Fatalf("viewed file marker missing:\n%s", view)
 	}
 }
 
@@ -666,12 +714,16 @@ func walkthroughModelWithDiff() Model {
 			Overview: "Adds a guided review flow.",
 			ReviewOrder: []review.ReviewStep{
 				{
-					ID:       "step-1",
-					FilePath: "dev/fixtures/dummy-pr/review_target.go",
-					Title:    "Access guard",
-					Summary:  "A function was renamed.",
-					Why:      "Callers may need updates.",
-					Focus:    []string{"Confirm callers are updated."},
+					ID:         "step-1",
+					FilePath:   "dev/fixtures/dummy-pr/review_target.go",
+					Title:      "Access guard",
+					GroupID:    "fixture-account",
+					GroupTitle: "Fixture account helpers",
+					LayerIndex: 1,
+					LayerTitle: "Billing access guard",
+					Summary:    "A function was renamed.",
+					Why:        "Callers may need updates.",
+					Focus:      []string{"Confirm callers are updated."},
 					DiffLines: []review.DiffLine{
 						{Kind: review.DiffLineContext, OldLine: intPtr(1), NewLine: intPtr(1), Text: "package main"},
 						{Kind: review.DiffLineDeleted, OldLine: &oldLine, Text: "func oldName() {}"},

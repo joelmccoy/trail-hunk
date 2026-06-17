@@ -14,6 +14,10 @@ func TestDecodeReviewResponseValidatesStructuredJSON(t *testing.T) {
 				"file_path": "app.go",
 				"hunk_id": "app.go:1",
 				"title": "Review app startup",
+				"group_id": "startup",
+				"group_title": "Startup configuration",
+				"layer_index": 1,
+				"layer_title": "Provider setup",
 				"summary": "Config is loaded before the TUI starts.",
 				"why": "Provider choice affects the rest of the flow.",
 				"focus": ["startup", "configuration"],
@@ -40,6 +44,10 @@ func TestDecodeReviewResponseValidatesStructuredJSON(t *testing.T) {
 	}
 	if len(response.ReviewOrder) != 1 {
 		t.Fatalf("len(ReviewOrder) = %d, want 1", len(response.ReviewOrder))
+	}
+	step := response.ReviewOrder[0]
+	if step.GroupTitle != "Startup configuration" || step.LayerTitle != "Provider setup" || step.LayerIndex != 1 {
+		t.Fatalf("change stack metadata = %+v", step)
 	}
 }
 

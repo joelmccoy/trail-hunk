@@ -13,6 +13,8 @@ const (
 	keyPreviousSuggestion = "K"
 	keyNextFile           = "]"
 	keyPreviousFile       = "["
+	keyFocusMode          = "z"
+	keyToggleViewed       = "v"
 	keySelectNext         = keyMoveDown
 	keySelectPrevious     = keyMoveUp
 	keyAcceptComment      = "a"

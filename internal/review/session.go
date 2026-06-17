@@ -47,6 +47,10 @@ type ReviewStep struct {
 	FilePath    string
 	HunkID      string
 	Title       string
+	GroupID     string
+	GroupTitle  string
+	LayerIndex  int
+	LayerTitle  string
 	Summary     string
 	Why         string
 	Focus       []string

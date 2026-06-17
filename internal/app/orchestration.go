@@ -107,14 +107,18 @@ func buildReviewSession(repo git.Repository, pr github.PullRequest, diff github.
 
 	for _, step := range aiReview.ReviewOrder {
 		reviewStep := review.ReviewStep{
-			ID:        step.ID,
-			FilePath:  step.FilePath,
-			HunkID:    step.HunkID,
-			Title:     step.Title,
-			Summary:   step.Summary,
-			Why:       step.Why,
-			Focus:     step.Focus,
-			DiffLines: diffLinesForStep(diff, step.FilePath, step.HunkID),
+			ID:         step.ID,
+			FilePath:   step.FilePath,
+			HunkID:     step.HunkID,
+			Title:      step.Title,
+			GroupID:    step.GroupID,
+			GroupTitle: step.GroupTitle,
+			LayerIndex: step.LayerIndex,
+			LayerTitle: step.LayerTitle,
+			Summary:    step.Summary,
+			Why:        step.Why,
+			Focus:      step.Focus,
+			DiffLines:  diffLinesForStep(diff, step.FilePath, step.HunkID),
 		}
 
 		for _, suggestion := range step.Suggestions {

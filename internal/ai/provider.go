@@ -48,6 +48,10 @@ type ReviewStep struct {
 	FilePath    string             `json:"file_path"`
 	HunkID      string             `json:"hunk_id"`
 	Title       string             `json:"title"`
+	GroupID     string             `json:"group_id,omitempty"`
+	GroupTitle  string             `json:"group_title,omitempty"`
+	LayerIndex  int                `json:"layer_index,omitempty"`
+	LayerTitle  string             `json:"layer_title,omitempty"`
 	Summary     string             `json:"summary"`
 	Why         string             `json:"why"`
 	Focus       []string           `json:"focus"`

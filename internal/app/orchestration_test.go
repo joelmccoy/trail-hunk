@@ -35,12 +35,16 @@ func TestRunReviewBuildsSessionFromPullRequestContext(t *testing.T) {
 				Overview: "Adds a guided review flow.",
 				ReviewOrder: []ai.ReviewStep{
 					{
-						ID:       "step-1",
-						FilePath: "app.go",
-						HunkID:   "app.go:1",
-						Title:    "Review rename",
-						Summary:  "A function was renamed.",
-						Why:      "Callers may need updates.",
+						ID:         "step-1",
+						FilePath:   "app.go",
+						HunkID:     "app.go:1",
+						Title:      "Review rename",
+						GroupID:    "rename",
+						GroupTitle: "Rename flow",
+						LayerIndex: 1,
+						LayerTitle: "Function rename",
+						Summary:    "A function was renamed.",
+						Why:        "Callers may need updates.",
 						Suggestions: []ai.SuggestedComment{
 							{
 								FilePath: "app.go",
@@ -69,6 +73,10 @@ func TestRunReviewBuildsSessionFromPullRequestContext(t *testing.T) {
 	}
 	if len(session.Comments) != 1 {
 		t.Fatalf("len(Comments) = %d, want 1", len(session.Comments))
+	}
+	step := session.Plan.ReviewOrder[0]
+	if step.GroupTitle != "Rename flow" || step.LayerTitle != "Function rename" || step.LayerIndex != 1 {
+		t.Fatalf("change stack metadata = %+v", step)
 	}
 }
 

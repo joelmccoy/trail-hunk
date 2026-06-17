@@ -70,13 +70,16 @@ func (w *WorkbenchModel) SetSize(width int, height int) {
 	w.Height = height
 }
 
-func (w *WorkbenchModel) Sync(session review.ReviewSession, selectedSuggestion int, showFiles bool) {
+func (w *WorkbenchModel) Sync(session review.ReviewSession, selectedSuggestion int, showFiles bool, viewedFiles map[string]bool, focusMode bool) {
 	step, ok := currentStep(session)
 	if !ok {
 		return
 	}
 
 	layout := workbenchLayout(w.Width, showFiles)
+	if focusMode {
+		layout = layoutSpec{DiffWidth: w.Width}
+	}
 	w.Diff.Width = layout.DiffWidth
 	w.Diff.Height = w.Height
 	w.Diff.SetContent(renderDiffRows(step, selectedSuggestion, layout.DiffWidth))
@@ -93,16 +96,19 @@ func (w *WorkbenchModel) Sync(session review.ReviewSession, selectedSuggestion i
 	w.Ask.SetHeight(3)
 }
 
-func (w WorkbenchModel) View(session review.ReviewSession, selectedSuggestion int, showFiles bool, showAsk bool) string {
+func (w WorkbenchModel) View(session review.ReviewSession, selectedSuggestion int, showFiles bool, showAsk bool, viewedFiles map[string]bool, focusMode bool) string {
 	step, ok := currentStep(session)
 	if !ok {
 		return fillBlock("No review steps loaded.", w.Width, w.Height)
 	}
 
 	layout := workbenchLayout(w.Width, showFiles)
+	if focusMode {
+		layout = layoutSpec{DiffWidth: w.Width}
+	}
 	segments := make([]string, 0, 5)
 	if layout.ShowRail {
-		segments = append(segments, renderRail(session, layout.RailWidth, w.Height))
+		segments = append(segments, renderRail(session, layout.RailWidth, w.Height, viewedFiles))
 		segments = append(segments, verticalSeparator(w.Height))
 	}
 
@@ -177,33 +183,142 @@ func currentStep(session review.ReviewSession) (review.ReviewStep, bool) {
 	return session.Plan.ReviewOrder[index], true
 }
 
-func renderRail(session review.ReviewSession, width int, height int) string {
+func renderRail(session review.ReviewSession, width int, height int, viewedFiles map[string]bool) string {
 	var lines []string
 	current, _ := currentStep(session)
-	lines = append(lines, sectionTitle("Changed Files"))
-	lines = append(lines, mutedText("f focus/toggle  j/k move  enter jump"))
+	lines = append(lines, sectionTitle("Change Stack"))
+	lines = append(lines, mutedText("Changed Files"))
+	lines = append(lines, mutedText("cohorts · layers · files"))
 	files := orderedStepFiles(session)
-	for _, file := range files {
-		filePrefix := "  "
-		if file == current.FilePath {
-			filePrefix = "▶ "
+	grouped := orderedGroups(session)
+	renderedFiles := map[string]bool{}
+	for _, group := range grouped {
+		lines = append(lines, "", sectionTitle(group.Title))
+		for _, file := range filesForGroup(session, group.ID) {
+			lines = appendFileRailEntry(lines, session, current, file, width, viewedFiles)
+			renderedFiles[file] = true
 		}
-		lines = append(lines, truncateCells(filePrefix+compactPath(file, width-2), width))
-		lines = append(lines, mutedText(fmt.Sprintf("  %d findings", suggestionCountForFile(session, file))))
-		for _, stepIndex := range stepIndexesForFile(session, file) {
-			step := session.Plan.ReviewOrder[stepIndex]
-			stepPrefix := "    "
-			if stepIndex == session.Cursor.StepIndex {
-				stepPrefix = "  ▶ "
-			}
-			lines = append(lines, truncateCells(stepPrefix+step.Title, width))
-		}
-		lines = append(lines, "")
 	}
-	lines = append(lines, sectionTitle("Review Progress"))
-	lines = append(lines, fmt.Sprintf("%d/%d steps", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder)))
+	if len(grouped) == 0 {
+		for _, file := range files {
+			lines = appendFileRailEntry(lines, session, current, file, width, viewedFiles)
+		}
+	} else {
+		var ungrouped []string
+		for _, file := range files {
+			if !renderedFiles[file] {
+				ungrouped = append(ungrouped, file)
+			}
+		}
+		if len(ungrouped) > 0 {
+			lines = append(lines, "", sectionTitle("Other changes"))
+			for _, file := range ungrouped {
+				lines = appendFileRailEntry(lines, session, current, file, width, viewedFiles)
+			}
+		}
+	}
+	lines = append(lines, "", sectionTitle("Review Progress"))
+	lines = append(lines, fmt.Sprintf("%d/%d layers", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder)))
+	lines = append(lines, fmt.Sprintf("%d/%d files viewed", viewedFileCount(viewedFiles), len(files)))
 	lines = append(lines, fmt.Sprintf("%d approved", len(session.ApprovedComments())))
-	return pane(FocusRail, FocusRail, "review map", strings.Join(lines, "\n"), width, height)
+	return pane(FocusRail, FocusRail, "change stack", strings.Join(lines, "\n"), width, height)
+}
+
+func appendFileRailEntry(lines []string, session review.ReviewSession, current review.ReviewStep, file string, width int, viewedFiles map[string]bool) []string {
+	viewedPrefix := "  "
+	if viewedFiles[file] {
+		viewedPrefix = "✓ "
+	}
+	filePrefix := viewedPrefix
+	if file == current.FilePath {
+		filePrefix = "▶ "
+		if viewedFiles[file] {
+			filePrefix = "▶ ✓ "
+		}
+	}
+	lines = append(lines, truncateCells(filePrefix+compactPath(file, width-2), width))
+	lines = append(lines, mutedText(fmt.Sprintf("  %d findings", suggestionCountForFile(session, file))))
+	for _, stepIndex := range stepIndexesForFile(session, file) {
+		step := session.Plan.ReviewOrder[stepIndex]
+		stepPrefix := "    "
+		if stepIndex == session.Cursor.StepIndex {
+			stepPrefix = "  ▶ "
+		}
+		title := step.LayerTitle
+		if title == "" {
+			title = step.Title
+		}
+		layerPrefix := ""
+		if step.LayerIndex > 0 {
+			layerPrefix = fmt.Sprintf("layer %d · ", step.LayerIndex)
+		}
+		lines = append(lines, truncateCells(stepPrefix+layerPrefix+title, width))
+		if step.LayerTitle != "" && step.Title != "" && step.Title != step.LayerTitle {
+			titlePrefix := "      "
+			if stepIndex == session.Cursor.StepIndex {
+				titlePrefix = "  ▶ "
+			}
+			lines = append(lines, truncateCells(titlePrefix+step.Title, width))
+		}
+	}
+	lines = append(lines, "")
+	return lines
+}
+
+type railGroup struct {
+	ID    string
+	Title string
+}
+
+func orderedGroups(session review.ReviewSession) []railGroup {
+	seen := map[string]bool{}
+	var groups []railGroup
+	for _, step := range session.Plan.ReviewOrder {
+		id := step.GroupID
+		title := step.GroupTitle
+		if id == "" {
+			id = title
+		}
+		if title == "" {
+			continue
+		}
+		if id == "" {
+			id = title
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		groups = append(groups, railGroup{ID: id, Title: title})
+	}
+	return groups
+}
+
+func filesForGroup(session review.ReviewSession, groupID string) []string {
+	seen := map[string]bool{}
+	var files []string
+	for _, step := range session.Plan.ReviewOrder {
+		id := step.GroupID
+		if id == "" {
+			id = step.GroupTitle
+		}
+		if id != groupID || step.FilePath == "" || seen[step.FilePath] {
+			continue
+		}
+		seen[step.FilePath] = true
+		files = append(files, step.FilePath)
+	}
+	return files
+}
+
+func viewedFileCount(viewedFiles map[string]bool) int {
+	count := 0
+	for _, viewed := range viewedFiles {
+		if viewed {
+			count++
+		}
+	}
+	return count
 }
 
 func orderedStepFiles(session review.ReviewSession) []string {
@@ -252,8 +367,19 @@ func compactPath(path string, width int) string {
 
 func renderInspector(session review.ReviewSession, step review.ReviewStep, selectedSuggestion int, width int) string {
 	var lines []string
-	lines = append(lines, mutedText(fmt.Sprintf("step %d/%d", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder))))
-	lines = append(lines, sectionTitle(step.Title))
+	layerLabel := fmt.Sprintf("layer %d/%d", session.Cursor.StepIndex+1, len(session.Plan.ReviewOrder))
+	if step.LayerIndex > 0 {
+		layerLabel = fmt.Sprintf("layer %d", step.LayerIndex)
+	}
+	if step.GroupTitle != "" {
+		layerLabel += " · " + step.GroupTitle
+	}
+	lines = append(lines, mutedText(layerLabel))
+	title := step.Title
+	if step.LayerTitle != "" {
+		title = step.LayerTitle
+	}
+	lines = append(lines, sectionTitle(title))
 	lines = append(lines, "", sectionTitle("What this chunk does"))
 	if step.Summary != "" {
 		lines = append(lines, step.Summary)
