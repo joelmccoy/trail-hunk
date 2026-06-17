@@ -50,7 +50,23 @@ type ReviewStep struct {
 	Summary     string
 	Why         string
 	Focus       []string
+	DiffLines   []DiffLine
 	Suggestions []ReviewComment
+}
+
+type DiffLineKind string
+
+const (
+	DiffLineContext DiffLineKind = "context"
+	DiffLineAdded   DiffLineKind = "added"
+	DiffLineDeleted DiffLineKind = "deleted"
+)
+
+type DiffLine struct {
+	Kind    DiffLineKind
+	OldLine *int
+	NewLine *int
+	Text    string
 }
 
 type ReviewCursor struct {

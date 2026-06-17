@@ -7,6 +7,7 @@ import (
 	"github.com/joelmccoy/trail-hunk/internal/ai"
 	"github.com/joelmccoy/trail-hunk/internal/git"
 	"github.com/joelmccoy/trail-hunk/internal/github"
+	"github.com/joelmccoy/trail-hunk/internal/review"
 )
 
 func TestRunReviewBuildsSessionFromPullRequestContext(t *testing.T) {
@@ -68,6 +69,60 @@ func TestRunReviewBuildsSessionFromPullRequestContext(t *testing.T) {
 	}
 	if len(session.Comments) != 1 {
 		t.Fatalf("len(Comments) = %d, want 1", len(session.Comments))
+	}
+}
+
+func TestRunReviewAddsDiffLinesToReviewSteps(t *testing.T) {
+	deps := ReviewDependencies{
+		Repo: fakeRepoDiscoverer{
+			repo: git.Repository{
+				Root:   "/repo",
+				Branch: "feature",
+				Ref:    git.RepoRef{Owner: "joelmccoy", Name: "trail-hunk"},
+			},
+		},
+		GitHub: fakeGitHubContext{
+			prs: []github.PullRequest{{Number: 12, Title: "Add review flow"}},
+			diff: `diff --git a/app.go b/app.go
+--- a/app.go
++++ b/app.go
+@@ -1,2 +1,3 @@
+ package main
+-func oldName() {}
++func newName() {}
++func added() {}
+`,
+		},
+		AI: fakeAIProvider{
+			response: ai.ReviewResponse{
+				Overview: "Adds a guided review flow.",
+				ReviewOrder: []ai.ReviewStep{
+					{
+						ID:       "step-1",
+						FilePath: "app.go",
+						HunkID:   "app.go:1",
+						Title:    "Review hunk",
+						Summary:  "A hunk changed.",
+						Why:      "The reviewer needs the code.",
+					},
+				},
+			},
+		},
+	}
+
+	session, err := RunReview(context.Background(), "/repo", deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := session.Plan.ReviewOrder[0]
+	if len(step.DiffLines) != 4 {
+		t.Fatalf("len(DiffLines) = %d, want 4", len(step.DiffLines))
+	}
+	if step.DiffLines[1].Kind != review.DiffLineDeleted || step.DiffLines[1].OldLine == nil {
+		t.Fatalf("deleted line = %+v", step.DiffLines[1])
+	}
+	if step.DiffLines[2].Kind != review.DiffLineAdded || step.DiffLines[2].NewLine == nil {
+		t.Fatalf("added line = %+v", step.DiffLines[2])
 	}
 }
 

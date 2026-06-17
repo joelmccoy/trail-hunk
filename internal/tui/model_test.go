@@ -205,6 +205,50 @@ func TestStartReviewKeyRunsStarterAndLoadsWalkthrough(t *testing.T) {
 	}
 }
 
+func TestWalkthroughRendersDiffAndSuggestions(t *testing.T) {
+	oldLine := 2
+	newLine := 2
+	model := NewModel(review.ReviewSession{
+		Plan: review.WalkthroughPlan{
+			ReviewOrder: []review.ReviewStep{
+				{
+					ID:       "step-1",
+					FilePath: "app.go",
+					Title:    "Review rename",
+					Summary:  "A function was renamed.",
+					Why:      "Callers may need updates.",
+					DiffLines: []review.DiffLine{
+						{Kind: review.DiffLineContext, OldLine: intPtr(1), NewLine: intPtr(1), Text: "package main"},
+						{Kind: review.DiffLineDeleted, OldLine: &oldLine, Text: "func oldName() {}"},
+						{Kind: review.DiffLineAdded, NewLine: &newLine, Text: "func newName() {}"},
+					},
+					Suggestions: []review.ReviewComment{
+						{ID: "c1", Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Status: review.StatusSuggested},
+					},
+				},
+			},
+		},
+		Comments: []review.ReviewComment{
+			{ID: "c1", Body: "Confirm callers were updated.", Priority: review.PriorityMedium, Status: review.StatusSuggested},
+		},
+	})
+	model.Screen = ScreenWalkthrough
+	model.Width = 120
+	model.Height = 32
+
+	view := model.View()
+	for _, want := range []string{"Review rename", "Diff", "func oldName() {}", "func newName() {}", "Suggestions", "Confirm callers"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() missing %q:\n%s", want, view)
+		}
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width != model.Width {
+			t.Fatalf("line %d width = %d, want %d: %q", i, width, model.Width, line)
+		}
+	}
+}
+
 func TestStartupLoaderDisplaysCurrentPullRequest(t *testing.T) {
 	model := NewModelWithOptions(review.ReviewSession{}, Options{
 		StartupLoader: func(context.Context) (review.StartupContext, error) {
@@ -366,6 +410,10 @@ func TestStartReviewFailureShowsError(t *testing.T) {
 
 func key(value string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func contains(s string, substr string) bool {

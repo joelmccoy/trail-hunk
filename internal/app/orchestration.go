@@ -107,13 +107,14 @@ func buildReviewSession(repo git.Repository, pr github.PullRequest, diff github.
 
 	for _, step := range aiReview.ReviewOrder {
 		reviewStep := review.ReviewStep{
-			ID:       step.ID,
-			FilePath: step.FilePath,
-			HunkID:   step.HunkID,
-			Title:    step.Title,
-			Summary:  step.Summary,
-			Why:      step.Why,
-			Focus:    step.Focus,
+			ID:        step.ID,
+			FilePath:  step.FilePath,
+			HunkID:    step.HunkID,
+			Title:     step.Title,
+			Summary:   step.Summary,
+			Why:       step.Why,
+			Focus:     step.Focus,
+			DiffLines: diffLinesForStep(diff, step.FilePath, step.HunkID),
 		}
 
 		for _, suggestion := range step.Suggestions {
@@ -141,4 +142,39 @@ func buildReviewSession(repo git.Repository, pr github.PullRequest, diff github.
 	}
 
 	return session
+}
+
+func diffLinesForStep(diff github.PullRequestDiff, filePath string, hunkID string) []review.DiffLine {
+	for _, file := range diff.Files {
+		if file.Path != filePath {
+			continue
+		}
+		for _, hunk := range file.Hunks {
+			if hunk.ID != hunkID {
+				continue
+			}
+			lines := make([]review.DiffLine, 0, len(hunk.Lines))
+			for _, line := range hunk.Lines {
+				lines = append(lines, review.DiffLine{
+					Kind:    reviewDiffLineKind(line.Kind),
+					OldLine: line.OldLine,
+					NewLine: line.NewLine,
+					Text:    line.Text,
+				})
+			}
+			return lines
+		}
+	}
+	return nil
+}
+
+func reviewDiffLineKind(kind github.DiffLineKind) review.DiffLineKind {
+	switch kind {
+	case github.DiffLineAdded:
+		return review.DiffLineAdded
+	case github.DiffLineDeleted:
+		return review.DiffLineDeleted
+	default:
+		return review.DiffLineContext
+	}
 }

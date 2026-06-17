@@ -227,7 +227,7 @@ func (m Model) renderBody(width int) string {
 		b.WriteString(m.Session.Plan.Overview)
 		b.WriteByte('\n')
 	case ScreenWalkthrough:
-		b.WriteString(renderWalkthrough(m))
+		b.WriteString(renderWalkthrough(m, width))
 	case ScreenComments:
 		b.WriteString(renderComments(m, width))
 	case ScreenSubmit:
@@ -328,42 +328,100 @@ func renderStartup(m Model, width int) string {
 	return renderPanelGrid(width, panels)
 }
 
-func renderWalkthrough(m Model) string {
+func renderWalkthrough(m Model, width int) string {
 	if len(m.Session.Plan.ReviewOrder) == 0 {
 		return "No review steps loaded.\n"
 	}
 
 	step := m.Session.Plan.ReviewOrder[m.Session.Cursor.StepIndex]
-	var b strings.Builder
+	var panels []func(int) string
 	if m.ShowFileTree {
-		b.WriteString("[files]\n")
+		panels = append(panels, func(width int) string {
+			return infoPanel("Files", []string{step.FilePath}, width)
+		})
 	}
-	b.WriteString(step.Title)
-	b.WriteByte('\n')
-	b.WriteString(step.Summary)
-	b.WriteByte('\n')
-	b.WriteString("why: ")
-	b.WriteString(step.Why)
-	b.WriteByte('\n')
-	if len(step.Suggestions) > 0 {
-		b.WriteString("\nsuggestions:\n")
-		for i, suggestion := range step.Suggestions {
-			prefix := "  "
-			if i == m.SelectedSuggestion {
-				prefix = "> "
-			}
-			b.WriteString(prefix)
-			b.WriteString("[")
-			b.WriteString(string(suggestion.Status))
-			b.WriteString("] ")
-			b.WriteString(suggestion.Body)
-			b.WriteByte('\n')
+
+	overviewLines := []string{step.Title, "", step.Summary, "", "why: " + step.Why}
+	if len(step.Focus) > 0 {
+		overviewLines = append(overviewLines, "", "focus:")
+		for _, item := range step.Focus {
+			overviewLines = append(overviewLines, "- "+item)
 		}
 	}
-	if m.ShowAskPane {
-		b.WriteString("[ask pane]\n")
+	panels = append(panels, func(width int) string {
+		return infoPanel("Step", overviewLines, width)
+	})
+
+	panels = append(panels, func(width int) string {
+		return diffPanel(step, width)
+	})
+
+	if len(step.Suggestions) > 0 {
+		panels = append(panels, func(width int) string {
+			return suggestionsPanel(step.Suggestions, m.SelectedSuggestion, width)
+		})
 	}
-	return b.String()
+	if m.ShowAskPane {
+		panels = append(panels, func(width int) string {
+			return statusPanel("Ask", "Ask pane placeholder for current step context.", width, lipgloss.Color("36"))
+		})
+	}
+	return renderPanelGrid(width, panels)
+}
+
+func diffPanel(step review.ReviewStep, width int) string {
+	var lines []string
+	if step.FilePath != "" {
+		lines = append(lines, step.FilePath)
+	}
+	if len(step.DiffLines) == 0 {
+		lines = append(lines, "No diff lines mapped for this step.")
+		return statusPanel("Diff", strings.Join(lines, "\n"), width, lipgloss.Color("178"))
+	}
+	for _, line := range step.DiffLines {
+		lines = append(lines, renderDiffLine(line))
+	}
+	return statusPanel("Diff", strings.Join(lines, "\n"), width, lipgloss.Color("63"))
+}
+
+func suggestionsPanel(suggestions []review.ReviewComment, selected int, width int) string {
+	var lines []string
+	for i, suggestion := range suggestions {
+		prefix := "  "
+		if i == selected {
+			prefix = "> "
+		}
+		target := suggestion.FilePath
+		if suggestion.Line > 0 {
+			target = fmt.Sprintf("%s:%d", suggestion.FilePath, suggestion.Line)
+		}
+		lines = append(lines, fmt.Sprintf("%s[%s/%s] %s", prefix, suggestion.Priority, suggestion.Status, target))
+		lines = append(lines, "  "+suggestion.Body)
+	}
+	return infoPanel("Suggestions", lines, width)
+}
+
+func renderDiffLine(line review.DiffLine) string {
+	marker := " "
+	switch line.Kind {
+	case review.DiffLineAdded:
+		marker = "+"
+	case review.DiffLineDeleted:
+		marker = "-"
+	}
+	return fmt.Sprintf("%s %s %s", marker, renderLineNumbers(line), line.Text)
+}
+
+func renderLineNumbers(line review.DiffLine) string {
+	oldLine := " "
+	newLine := " "
+	if line.OldLine != nil {
+		oldLine = fmt.Sprintf("%d", *line.OldLine)
+	}
+	if line.NewLine != nil {
+		newLine = fmt.Sprintf("%d", *line.NewLine)
+	}
+	return fmt.Sprintf("%4s %4s", oldLine, newLine)
 }
 
 func renderComments(m Model, width int) string {
